@@ -162,22 +162,52 @@ def pairwise_gene_scores(L: np.ndarray, nu_k: np.ndarray, k: int, j: int, scale:
         scale_factor = np.abs(L).sum(axis=1) + 1e-5
         return raw_scores / scale_factor
     return raw_scores
-
-
-def get_top_genes_per_cluster(L, nu_k, pi_k, gene_names, top_n=5) -> dict:
-    """Top `top_n` marker genes (by |score|) for each cluster, as (gene, score) pairs."""
-    L_np = L.cpu().numpy() if torch.is_tensor(L) else L
-    nu_np = nu_k.cpu().numpy() if torch.is_tensor(nu_k) else nu_k
-    pi_np = pi_k.cpu().numpy() if torch.is_tensor(pi_k) else pi_k
-
+ 
+ 
+def top_marker_genes_table(L, nu_k, pi_k, gene_names, top_n: int = 5,
+                            upregulated_only: bool = False) -> pd.DataFrame:
+    """
+    Tidy table of the top `top_n` marker genes per cluster.
+ 
+    Columns: cluster, rank, gene, score (positive = upregulated in that cluster
+    relative to the population average; negative = downregulated). Ready to
+    print or `.to_csv(...)` directly.
+ 
+    Args:
+        upregulated_only: if False (default), rank genes by |score| per
+            cluster, so both up- and down-regulated markers can appear. If
+            True, only positive-score (upregulated) genes are considered.
+    """
+    L_np = L.detach().cpu().numpy() if torch.is_tensor(L) else np.asarray(L)
+    nu_np = nu_k.detach().cpu().numpy() if torch.is_tensor(nu_k) else np.asarray(nu_k)
+    pi_np = pi_k.detach().cpu().numpy() if torch.is_tensor(pi_k) else np.asarray(pi_k)
+ 
+    nu_bar = (pi_np[:, None] * nu_np).sum(0)  # (q,) population-average latent position
+    scale_factor = np.abs(L_np).sum(axis=1, keepdims=True) + 1e-5  # (D, 1)
+    scores = (L_np @ (nu_np - nu_bar).T) / scale_factor  # (D, K): every cluster at once
+ 
+    rows = []
     K = nu_np.shape[0]
-    top_genes = {}
     for k in range(K):
-        scores = gene_scores(L_np, nu_np, pi_np, k)
-        abs_order = np.argsort(-np.abs(scores))[:top_n]
-        top_genes[k] = [(gene_names[i], scores[i]) for i in abs_order]
-
-    return top_genes
+        col = scores[:, k]
+        if upregulated_only:
+            candidates = np.flatnonzero(col > 0)
+            order = candidates[np.argsort(-col[candidates])][:top_n]
+        else:
+            order = np.argsort(-np.abs(col))[:top_n]
+        for rank, i in enumerate(order, start=1):
+            rows.append({"cluster": k, "rank": rank, "gene": gene_names[i], "score": float(col[i])})
+ 
+    return pd.DataFrame(rows, columns=["cluster", "rank", "gene", "score"])
+ 
+ 
+def print_top_marker_genes(table: pd.DataFrame) -> None:
+    """Print a table from `top_marker_genes_table` grouped by cluster."""
+    print("Positive scores = upregulated in cluster | Negative = downregulated")
+    for k, group in table.groupby("cluster"):
+        print(f"Cluster {k}:")
+        for _, row in group.iterrows():
+            print(f"  {row['gene']:20s} {row['score']:8.3f}")
 
 # ------------------------------------------------------------------
 # Data loading

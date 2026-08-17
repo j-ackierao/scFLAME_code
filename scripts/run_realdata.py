@@ -3,7 +3,7 @@ run_realdata.py
 ================
 Fit scFLAME to a real scRNA-seq dataset and report clustering performance
 against ground-truth cell-type labels. Saves allocation table, summary metrics, 
-and t-SNE plot of latent factors.
+and t-SNE plot of latent factors. Optionally saves top marker genes per cluster.
 
 Expected input files under --data-dir:
     counts.csv           cells x genes raw count matrix, first column = cell ID
@@ -12,7 +12,7 @@ Expected input files under --data-dir:
     library_sizes.csv    columns "cell_id", "tmm_lib_size" (e.g. TMM size factors)
 
 Usage:
-    python scripts/run_realdata.py --data-dir data/segerstolpe --out-dir results/segerstolpe
+    python scripts/run_realdata.py --data-dir data/segerstolpe --out-dir results/segerstolpe --top-n-genes 10 --upregulated-only --print-top-genes
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from scflame import (
     DEVICE, train_nb_fa, train_scflame, make_eii_gmm_init,
     clustering_accuracy, get_top_genes_per_cluster, plot_tsne,
 )
-from scflame.utils import load_dataset
+from scflame.utils import load_dataset, print_top_marker_genes, top_marker_genes_table
 
 
 def run(args: argparse.Namespace) -> None:
@@ -93,16 +93,17 @@ def run(args: argparse.Namespace) -> None:
             "elbo_final": final_result["trace"]["elbo"][-1],
         })
 
-        if args.print_top_genes:
-            top_genes = get_top_genes_per_cluster(
-                final_result["L"], final_result["nu_k"], final_result["pi_k"], gene_names, top_n=10,
+        if args.print_top_genes or args.save_top_genes:
+            gene_table = top_marker_genes_table(
+                final_result["L"], final_result["nu_k"], final_result["pi_k"],
+                gene_names, top_n=args.top_n_genes, upregulated_only=args.upregulated_only,
             )
-            print(f"\n--- Top 10 genes per cluster (repeat {repeat + 1}) ---")
-            print("Positive scores = upregulated in cluster | Negative = downregulated")
-            for k in sorted(top_genes):
-                print(f"Cluster {k}:")
-                for gene, score in top_genes[k]:
-                    print(f"  {gene:20s} {score:8.3f}")
+            if args.print_top_genes:
+                print(f"\n--- Top {args.top_n_genes} genes per cluster (repeat {repeat + 1}) ---")
+                print_top_marker_genes(gene_table)
+            if args.save_top_genes:
+                gene_table.insert(0, "repeat", repeat + 1)
+                gene_table_rows.append(gene_table)
 
         if repeat == 0:
             tsne_data = dict(
@@ -117,6 +118,11 @@ def run(args: argparse.Namespace) -> None:
     alloc_path = os.path.join(args.out_dir, "scflame_allocations.csv")
     pd.DataFrame(alloc_cols).to_csv(alloc_path, index=False)
     print(f"Saved: {alloc_path}")
+
+    if gene_table_rows:
+        genes_path = os.path.join(args.out_dir, "scflame_top_genes.csv")
+        pd.concat(gene_table_rows, ignore_index=True).to_csv(genes_path, index=False)
+        print(f"Saved: {genes_path}")
 
     if tsne_data is not None:
         print("\nGenerating t-SNE plot...")
@@ -140,6 +146,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sanitize-gene-names", action="store_true",
                     help="Normalise '-'/'+' -> '.' in dispersion.csv's gene column before matching")
     p.add_argument("--print-top-genes", action="store_true", help="Print top marker genes per cluster")
+    p.add_argument("--save-top-genes", action="store_true", help="Save top marker genes per cluster to CSV")
+    p.add_argument("--top-n-genes", type=int, default=10, help="Number of top genes to display/save per cluster")
+    p.add_argument("--upregulated-only", action="store_true", help="Only consider upregulated genes")
     p.add_argument("--save-checkpoints", action="store_true",
                 help="Save nbfa_result/scflame_result .pt checkpoints per repeat under out-dir/checkpoints")
     p.add_argument("--verbose", action="store_true", help="Print per-epoch training progress")
