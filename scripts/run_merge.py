@@ -30,7 +30,7 @@ from sklearn.metrics import adjusted_rand_score
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from scflame import DEVICE, train_nb_fa, train_scflame, make_eii_gmm_init
-from scflame.utils import load_dataset
+from scflame.utils import load_dataset, top_marker_genes_table, print_top_marker_genes
 from scflame.merging import greedy_merge_full, m_step_cluster_params_full
 from scflame.viz import plot_tsne_merge_path
 
@@ -53,11 +53,9 @@ def run(args: argparse.Namespace) -> None:
     np.random.seed(args.seed)
 
     print("Fitting NBFA...")
-    C_tensor = torch.tensor(C, dtype=torch.float32, device=DEVICE)
-    C_tensor = C_tensor / C_tensor.mean()
 
     nbfa_result = train_nb_fa(
-        X, q=args.latent_dim, C=C_tensor,
+        X, q=args.latent_dim, C=C,
         mc_samples=args.mc_samples, epochs=args.nbfa_epochs,
         lr=1e-2, disp=torch.tensor(dispersions, dtype=torch.float32), verbose=args.verbose,
     )
@@ -83,6 +81,19 @@ def run(args: argparse.Namespace) -> None:
         if args.save_checkpoints:
             torch.save(initial_result,
                         os.path.join(checkpoint_dir, f"initial_result_task_{args.seed}_Kinit_{K_init}.pt"))
+
+        if args.print_top_genes or args.save_top_genes:
+            gene_table = top_marker_genes_table(
+                final_result["L"], final_result["nu_k"], final_result["pi_k"],
+                gene_names, top_n=args.top_n_genes, upregulated_only=args.upregulated_only,
+            )
+            if args.print_top_genes:
+                print(f"\n--- Top {args.top_n_genes} genes per cluster ---")
+                print_top_marker_genes(gene_table)
+            if args.save_top_genes:
+                gene_table_path = os.path.join(out_dir, f"top_genes_Kinit{K_init}.csv")
+                gene_table.to_csv(gene_table_path, index=False)
+                print(f"Saved: {gene_table_path}")
 
         c_pred_init = initial_result["r"].argmax(dim=1).cpu().numpy()
         print(f"  ARI after scFLAME init: {adjusted_rand_score(c_true_np, c_pred_init):.3f}")
@@ -155,6 +166,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mc-samples", type=int, default=10, help="Monte Carlo samples per ELBO evaluation")
     p.add_argument("--sanitize-gene-names", action="store_true",
                     help="Perform '-'/'+' -> '.' gene-name normalisation when matching dispersion.csv")
+    p.add_argument("--print-top-genes", action="store_true", help="Print top marker genes per cluster for initial K")
+    p.add_argument("--save-top-genes", action="store_true", help="Save top marker genes per cluster to CSV for initial K")
     p.add_argument("--seed", type=int, default=1, help="Random seed")
     p.add_argument("--save-checkpoints", action="store_true",
                 help="Save nbfa_result/scflame_result .pt checkpoints per repeat under out-dir/checkpoints")

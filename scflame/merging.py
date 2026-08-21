@@ -309,7 +309,8 @@ def greedy_merge_full(
         K_final: stop merging once K reaches this value
         checkpoint_dir: if given, save the merged result to this directory after
             every merge step (as f"{checkpoint_tag}_K{K}.pt"); the directory is
-            created if it doesn't exist. If None, no checkpoints are written.
+            created if it doesn't exist. If None, no checkpoints are written. This
+            is essential for gene scoring, as this function does not currently find marker genes at each merge step.
         checkpoint_tag: string tag to include in checkpoint filenames (default "run")
 
     Returns (final_result, K_reached, history, allocations), where `history` is a
