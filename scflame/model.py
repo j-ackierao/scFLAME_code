@@ -367,7 +367,7 @@ def train_scflame(X, nbfa_result, gmm_result, K, alpha_prior=0.1,
 
         total_recon = 0.0
         for si in range(mc_samples):
-            mu = torch.exp(gamma.unsqueeze(0) + Lz[si] + torch.log(A).unsqueeze(1)).clamp(min=1e-8)
+            mu = torch.exp(gamma.unsqueeze(0) + Lz[si] + delta_i + torch.log(A).unsqueeze(1)).clamp(min=1e-8)
             phi = torch.exp(log_phi).unsqueeze(0).clamp(min=0.05, max=100.0)
             total_recon += log_nb_pmf(X, mu, phi).sum()
 
