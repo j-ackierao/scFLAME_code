@@ -146,7 +146,7 @@ def compute_elbo_scflame(X, L, gamma, log_phi, A, m, log_s, r, nu_k, omega2_k,
     for s_idx in range(mc_samples):
         logmu = gamma.unsqueeze(0) + Lz[s_idx] + delta_i + torch.log(A).unsqueeze(1)
         mu = torch.exp(logmu).clamp(min=1e-8)
-        phi = torch.exp(log_phi).unsqueeze(0).clamp(min=0.1, max=100)
+        phi = torch.exp(log_phi).unsqueeze(0).clamp(min=0.05, max=100.0)
         log_lik[s_idx] = log_nb_pmf(X, mu, phi).sum(dim=1)
 
     E_log_p_y = log_lik.mean(0).sum()

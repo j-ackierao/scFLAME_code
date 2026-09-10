@@ -7,9 +7,10 @@ and t-SNE plot of latent factors. Optionally saves top marker genes per cluster.
 
 Expected input files under --data-dir:
     counts.csv           cells x genes raw count matrix, first column = cell ID
-    clusters.csv         one column "celltype", integer-coded ground-truth labels
-    dispersion.csv       columns "gene", "dispersion" (e.g. edgeR estimates)
-    library_sizes.csv    columns "cell_id", "tmm_lib_size" (e.g. TMM size factors)
+    clusters.csv         one column "celltype", integer-coded ground-truth labels. 
+                        Optional second column "batch_id" for batch correction.
+    dispersion.csv       columns "gene", "dispersion" (e.g. edgeR estimates) (optional)
+    library_sizes.csv    columns "cell_id", "tmm_lib_size" (e.g. TMM size factors) (optional)
 
 Usage:
     python scripts/run_realdata.py --data-dir data/segerstolpe --out-dir results/segerstolpe --top-n-genes 10 --upregulated-only --print-top-genes
@@ -44,7 +45,7 @@ def run(args: argparse.Namespace) -> None:
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    X, gene_names, c_true_np, dispersions, C = load_dataset(args.data_dir, args.n_hvgs)
+    X, gene_names, c_true_np, dispersions, C, batch_true = load_dataset(args.data_dir, args.n_hvgs)
     N, D = X.shape
     K_true = len(np.unique(c_true_np))
     print(f"N={N}, D={D}, true clusters={K_true}")
@@ -61,7 +62,7 @@ def run(args: argparse.Namespace) -> None:
         np.random.seed(repeat_seed)
 
         nbfa_result = train_nb_fa(
-            X, q=args.latent_dim, C=C,
+            X, q=args.latent_dim, C=C, batch=batch_true,
             mc_samples=args.mc_samples, epochs=args.nbfa_epochs,
             lr=1e-2, disp=dispersions, verbose=args.verbose,
         )

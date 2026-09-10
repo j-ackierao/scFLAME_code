@@ -7,10 +7,11 @@ over-clustering + merging is preferred to fitting K directly, or a hierarchical 
 the data is desired (see the accompanying preprint).
 
 Expected input files under --data-dir:
-    counts.csv            cells x genes raw count matrix, first column = cell ID
-    clusters.csv           columns "cell_id", "celltype" (integer-coded ground truth)
-    dispersion.csv         columns "gene", "dispersion" (e.g. edgeR tagwise estimates)
-    library_sizes.csv      columns "cell_id", "tmm_lib_size" (e.g. TMM size factors)
+    counts.csv           cells x genes raw count matrix, first column = cell ID
+    clusters.csv         one column "celltype", integer-coded ground-truth labels. 
+                         Optional second column "batch_id" for batch correction.
+    dispersion.csv       columns "gene", "dispersion" (e.g. edgeR estimates) (optional)
+    library_sizes.csv    columns "cell_id", "tmm_lib_size" (e.g. TMM size factors) (optional)
 
 Usage:
     python scripts/run_merge.py --data-dir data/baron --out-dir results/baron \\
@@ -42,7 +43,7 @@ def run(args: argparse.Namespace) -> None:
     if args.save_checkpoints:
         os.makedirs(checkpoint_dir, exist_ok=True)
 
-    X, gene_names, c_true_np, dispersions, C = load_dataset(
+    X, gene_names, c_true_np, dispersions, C, batch_true = load_dataset(
         args.data_dir, args.n_hvgs, sanitize_gene_names= args.sanitize_gene_names,
     )
     N, D = X.shape
@@ -55,7 +56,7 @@ def run(args: argparse.Namespace) -> None:
     print("Fitting NBFA...")
 
     nbfa_result = train_nb_fa(
-        X, q=args.latent_dim, C=C,
+        X, q=args.latent_dim, C=C, batch=batch_true,
         mc_samples=args.mc_samples, epochs=args.nbfa_epochs,
         lr=1e-2, disp=torch.tensor(dispersions, dtype=torch.float32), verbose=args.verbose,
     )

@@ -215,7 +215,8 @@ def print_top_marker_genes(table: pd.DataFrame) -> None:
 
 def load_dataset(data_dir: str, n_hvgs: int, sanitize_gene_names: bool = True):
     """Load counts + labels, drop rare cell types, subset to top HVGs, and
-    load matching dispersions / library sizes."""
+    optionally load matching dispersions / library sizes. Batch IDs are loaded
+    if provided in the clusters.csv file (column "batch_id")."""
     df = pd.read_csv(os.path.join(data_dir, "counts.csv"), index_col=0)
 
     log_df = np.log1p(df.values)
@@ -229,16 +230,26 @@ def load_dataset(data_dir: str, n_hvgs: int, sanitize_gene_names: bool = True):
     clusters_df = clusters_df.loc[df_hv.index]
     c_true = clusters_df["celltype"].astype(int).to_numpy()
 
-    dispersions_csv = pd.read_csv(os.path.join(data_dir, "dispersion.csv"))
-    if sanitize_gene_names:
-        dispersions_csv["gene"] = dispersions_csv["gene"].str.replace("-", ".", regex=False)
-        dispersions_csv["gene"] = dispersions_csv["gene"].str.replace("+", ".", regex=False)
-    dispersions = dispersions_csv.set_index("gene").loc[gene_names]["dispersion"].values
+    batch_true = None
+    if "batch_id" in clusters_df.columns:
+        batch_true = clusters_df["batch_id"].to_numpy()
 
-    lib_sizes_csv = pd.read_csv(os.path.join(data_dir, "library_sizes.csv")).set_index("cell_id")
-    C = lib_sizes_csv.loc[df_hv.index]["tmm_lib_size"].values
+    dispersions = None
+    dispersion_path = os.path.join(data_dir, "dispersion.csv")
+    if os.path.exists(dispersion_path):
+        dispersions_csv = pd.read_csv(dispersion_path)
+        if sanitize_gene_names:
+            dispersions_csv["gene"] = dispersions_csv["gene"].str.replace("-", ".", regex=False)
+            dispersions_csv["gene"] = dispersions_csv["gene"].str.replace("+", ".", regex=False)
+        dispersions = dispersions_csv.set_index("gene").loc[gene_names]["dispersion"].values
 
-    return X, gene_names, c_true, dispersions, C
+    C = None 
+    library_sizes_path = os.path.join(data_dir, "library_sizes.csv")
+    if os.path.exists(library_sizes_path):
+        lib_sizes_csv = pd.read_csv(library_sizes_path).set_index("cell_id")
+        C = lib_sizes_csv.loc[df_hv.index]["tmm_lib_size"].values
+
+    return X, gene_names, c_true, dispersions, C, batch_true
 
 # ============================================================
 # Synthetic data generator (useful for unit tests)

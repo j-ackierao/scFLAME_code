@@ -1,8 +1,8 @@
 """
 run_simulation.py
 ==================
-Fit scFLAME on simulated data, comparing cluster-initialisation strategies
-across a set of difficulty scenarios.
+Fit scFLAME on simulated data from the scFLAME generative model, comparing cluster-initialisation 
+strategies across a set of difficulty scenarios.
 
 Simulation scenarios are defined by the DATASETS constant below -- edit it
 directly to add/change scenarios; it isn't exposed as a CLI argument since
