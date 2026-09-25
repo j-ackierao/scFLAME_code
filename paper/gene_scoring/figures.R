@@ -818,14 +818,14 @@ scores_path <- "zeisel_gene_ranked.csv"
 top_n <- 5 # top upregulated genes per cluster
 
 KNOWN_MARKERS <- c(
-  # Hippocampal Pyramidal CA1
+  # Pyramidal CA1
   Spink8 = "Pyramidal CA1",
   Hpca = "Pyramidal CA1",
   Cpne6 = "Pyramidal CA1",
   Rgs14 = "Pyramidal CA1",
   Crym = "Pyramidal CA1",
 
-  # Cortical Somatosensory Pyramidal Neurons
+  # Pyramidal SS
   Tbr1 = "Pyramidal SS",
   Mef2c = "Pyramidal SS",
   Nrn1 = "Pyramidal SS",
