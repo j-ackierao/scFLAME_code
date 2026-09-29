@@ -67,8 +67,86 @@ batch_cells <- as.integer(strsplit(opt$batch_cells, ",")[[1]])
 dir.create(opt$outdir, recursive = TRUE, showWarnings = FALSE)
 
 ## -----------------------------
-## Load + preprocess the chosen reference dataset (deterministic, no RNG)
+## Load + preprocess the chosen reference dataset
 ## -----------------------------
+
+load_and_preprocess_segerstolpe <- function(path) {
+  sce.seger <- readRDS(path)
+ 
+  cell_counts <- table(sce.seger$CellType)
+  keep_types <- names(cell_counts)[cell_counts >= 50]
+  sce.seger <- sce.seger[, sce.seger$CellType %in% keep_types]
+  sce.seger$CellType <- factor(sce.seger$CellType)
+ 
+  group <- sce.seger$CellType
+  keep_cells <- !is.na(group) & nzchar(as.character(group))
+  sce.seger <- sce.seger[, keep_cells]
+  group <- droplevels(group[keep_cells])
+  message("[segerstolpe] Retained cell types: ", paste(levels(group), collapse = ", "))
+ 
+  keep_genes <- rowSums(counts(sce.seger) > 0) >= 10
+  sce.seger <- sce.seger[keep_genes, ]
+ 
+  log_cts <- log1p(as.matrix(counts(sce.seger)))
+  gene_var <- rowVars(log_cts)
+  n_top <- min(5000, nrow(sce.seger))
+  top_genes <- order(gene_var, decreasing = TRUE)[seq_len(n_top)]
+  sce.seger <- sce.seger[top_genes, ]
+  rm(log_cts, gene_var, top_genes); gc()
+ 
+  counts(sce.seger) <- as.matrix(counts(sce.seger))
+  colData(sce.seger)$group <- group
+ 
+  message("[segerstolpe] Using ", nrow(sce.seger), " genes and ", ncol(sce.seger), " cells")
+  sce.seger
+}
+
+load_and_preprocess_baron <- function(path) {
+  sce <- readRDS(path)
+ 
+  sce_donor1 <- sce[, colData(sce)$donor == "GSM2230757"]
+  sce_donor1 <- sce_donor1[rowSums(counts(sce_donor1)) > 10, ]
+ 
+  stats <- perCellQCMetrics(sce_donor1)
+  qc <- quickPerCellQC(stats)
+  sce_donor1 <- sce_donor1[, !qc$discard]
+ 
+  keep_genes <- rowSums(counts(sce_donor1) > 0) >= 5
+  sce_donor1 <- sce_donor1[keep_genes, ]
+ 
+  cell_counts <- table(sce_donor1$label)
+  valid_labels <- names(cell_counts[cell_counts >= 3])
+  sce_donor1 <- sce_donor1[, sce_donor1$label %in% valid_labels]
+ 
+  group <- as.factor(colData(sce_donor1)[["label"]])
+  keep_cells <- !is.na(group) & nzchar(as.character(group))
+  sce_donor1 <- sce_donor1[, keep_cells]
+  group <- droplevels(group[keep_cells])
+ 
+  tab <- sort(table(group), decreasing = TRUE)
+  keep_groups <- names(tab)[tab >= 100]
+  sce_donor1 <- sce_donor1[, group %in% keep_groups]
+  group <- droplevels(group[group %in% keep_groups])
+  message("[baron] Retained groups: ", paste(levels(group), collapse = ", "))
+ 
+  cts <- counts(sce_donor1)
+  keep_genes <- rowSums(cts > 0) >= 10
+  sce_donor1 <- sce_donor1[keep_genes, ]
+ 
+  log_cts <- log1p(as.matrix(counts(sce_donor1)))
+  gene_var <- rowVars(log_cts)
+  n_top <- min(5000, nrow(sce_donor1))
+  top_genes <- order(gene_var, decreasing = TRUE)[seq_len(n_top)]
+  sce_donor1 <- sce_donor1[top_genes, ]
+  rm(log_cts, gene_var, top_genes); gc()
+ 
+  counts(sce_donor1) <- as.matrix(counts(sce_donor1))
+  colData(sce_donor1)$group <- group
+ 
+  message("[baron] Using ", nrow(sce_donor1), " genes and ", ncol(sce_donor1), " cells")
+  sce_donor1
+}
+
 sce_ref <- switch(
   opt$dataset,
   baron = load_and_preprocess_baron(
@@ -79,7 +157,6 @@ sce_ref <- switch(
   ),
   stop("Unknown --dataset: ", opt$dataset)
 )
-### TWO OPTIONS HAVE BEEN TAKEN OUT, MAKE SURE THESE STAY OOUT
 
 ## -----------------------------
 ## Fit Splat parameters then apply any ablation overrides on top of the fit.

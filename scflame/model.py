@@ -25,39 +25,57 @@ from .utils import DEVICE, log_nb_pmf, sample_diag_gaussian, kl_diag_gaussian_to
 # NBFA warm-up stage
 # ============================================================
 
-def train_nb_fa(X, C=None, batch=None,q=10, mc_samples=5, epochs=300, lr=1e-2, disp=None, verbose=True, device=DEVICE):
-    """Fit a plain NB factor model using VI.
+import time
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
 
+
+def train_nb_fa(X, C=None, batch=None, q=10, mc_samples=5, epochs=300, lr=1e-2,
+                 disp=None, batch_size=None, verbose=True, device=DEVICE):
+    """Fit a plain NB factor model using VI, optionally in SGD mini-batches.
+ 
     Args:
         X: (N, D) count matrix.
         C: optional (N,) library-size factors.
-        batch: optional (N,) batch labels.
+        batch: optional (N,) biological/technical batch labels, used for the
+            per-batch-per-gene offset `delta`.
         q: latent dimensionality.
         disp: optional fixed per-gene dispersion (array or scalar). If None,
             dispersion is learned jointly with the other global parameters.
-
+        batch_size: number of cells per SGD mini-batch (gradient accumulation,
+            one optimiser step per epoch). Defaults to None, which trains on
+            the full dataset each epoch -- the original full-batch behaviour.
+            Pass e.g. batch_size=8192 to chunk large datasets.
+ 
     Returns a dict of fitted parameters used to initialise `train_scflame`.
     """
     N, D = X.shape
+    mini_batching = batch_size is not None and batch_size < N
+    if batch_size is None or batch_size >= N:
+        batch_size = N  # single chunk == exact full-batch behaviour
+ 
     if C is None:
         C = torch.ones(N, device=device)
     else:
         if isinstance(C, np.ndarray):
             C = torch.from_numpy(C)
         C = C.to(device).float()
-
+ 
     if batch is None:
         batch_idx = torch.zeros(N, dtype=torch.long, device=device)
-        B = 1
+        n_batches = 1
     else:
-        if isinstance(batch, np.ndarray): batch = torch.from_numpy(batch)
+        if isinstance(batch, np.ndarray):
+            batch = torch.from_numpy(batch)
         batch_idx = batch.to(device).long()
-        B = int(batch_idx.max().item()) + 1
-
+        n_batches = int(batch_idx.max().item()) + 1
+ 
     L = nn.Parameter(torch.randn(D, q, device=device) * 0.1)
     gamma = nn.Parameter(torch.zeros(D, device=device) + 0.1)  # gene-specific intercepts
-    delta_free = torch.nn.Parameter(torch.zeros(max(B - 1, 0), D, device=device))
-
+    delta_free = nn.Parameter(torch.zeros(max(n_batches - 1, 0), D, device=device))
+ 
     if disp is None:
         log_phi = nn.Parameter(torch.log(torch.ones(D, device=device) * 5.0))
     else:
@@ -66,52 +84,65 @@ def train_nb_fa(X, C=None, batch=None,q=10, mc_samples=5, epochs=300, lr=1e-2, d
         elif isinstance(disp, (float, int)):
             disp = torch.full((D,), float(disp))
         log_phi = torch.log(disp.float()).to(device)
-
+ 
     m = nn.Parameter(torch.randn(N, q, device=device) * 0.1)
     log_s = nn.Parameter(torch.full((N, q), -1.0, device=device))
-
-    opt_global = torch.optim.Adam(([L, gamma, log_phi, delta_free] if disp is None else [L, gamma, delta_free]), lr=lr)
-    opt_local = optim.Adam([m, log_s], lr=lr * 2)  # faster learning rate for per-cell params
-
+ 
+    global_params = [L, gamma, log_phi, delta_free] if disp is None else [L, gamma, delta_free]
+    opt_global = optim.Adam(global_params, lr=lr)
+    opt_local = optim.Adam([m, log_s], lr=lr * 2) # faster learning rate for per-cell params
+ 
     trace = []
     t0 = time.time()
-
+ 
     for ep in range(epochs):
+        permutation = torch.randperm(N)
         opt_global.zero_grad()
         opt_local.zero_grad()
-
-        delta_full = torch.cat([torch.zeros(1, D, device=device), delta_free], dim=0)
-        delta_i = delta_full[batch_idx]
-
-        mc_z = sample_diag_gaussian(m, log_s, mc=mc_samples)
-        total_ll = torch.zeros(mc_samples, N, device=device)
-        for s in range(mc_samples):
-            logmu = gamma.unsqueeze(0) + mc_z[s] @ L.t() + delta_i + torch.log(C).unsqueeze(1)
-            mu = torch.exp(logmu).clamp(min=1e-8)
-            phi = torch.exp(log_phi).unsqueeze(0).clamp(min=0.1, max=100)
-            total_ll[s] = log_nb_pmf(X.float(), mu, phi).sum(dim=1)
-        elbo = torch.sum(total_ll.mean(0) - kl_diag_gaussian_to_std_normal(m, log_s))
-        (-elbo).backward()
-        # Gradient clipping to avoid exploding gradients
+        epoch_elbo = 0.0
+ 
+        for i in range(0, N, batch_size):
+            mb_idx = permutation[i:i + batch_size]  # SGD chunk, unrelated to `batch`
+            n_mb = len(mb_idx)
+ 
+            X_mb, C_mb = X[mb_idx], C[mb_idx]
+            m_mb, log_s_mb = m[mb_idx], log_s[mb_idx]
+            batch_idx_mb = batch_idx[mb_idx]
+ 
+            delta_full = torch.cat([torch.zeros(1, D, device=device), delta_free], dim=0)
+            delta_mb = delta_full[batch_idx_mb]
+ 
+            mc_z = sample_diag_gaussian(m_mb, log_s_mb, mc=mc_samples)
+            total_ll = torch.zeros(mc_samples, n_mb, device=device)
+            for s in range(mc_samples):
+                logmu = gamma.unsqueeze(0) + mc_z[s] @ L.t() + delta_mb + torch.log(C_mb).unsqueeze(1)
+                mu = torch.exp(logmu).clamp(min=1e-8)
+                phi = torch.exp(log_phi).unsqueeze(0).clamp(min=0.1, max=100)
+                total_ll[s] = log_nb_pmf(X_mb.float(), mu, phi).sum(dim=1)
+ 
+            mb_elbo = torch.sum(total_ll.mean(0) - kl_diag_gaussian_to_std_normal(m_mb, log_s_mb))
+            # Only rescale when actually accumulating over >1 chunk
+            loss = -mb_elbo / N if mini_batching else -mb_elbo
+            loss.backward()
+            epoch_elbo += mb_elbo.item()
+ 
         clip_params = [L, gamma, log_phi, delta_free, m, log_s] if disp is None else [L, gamma, delta_free, m, log_s]
         nn.utils.clip_grad_norm_(clip_params, max_norm=5.0)
         opt_global.step()
         opt_local.step()
-        trace.append(elbo.item())
+        trace.append(epoch_elbo)
+ 
         if verbose and (ep % max(1, epochs // 10) == 0 or ep == epochs - 1):
-            print(f"Epoch {ep:4d} | ELBO {elbo.item():.1f} | ELBO/N {elbo.item() / N:.4f}")
-
+            print(f"Epoch {ep:4d} | ELBO {epoch_elbo:.1f} | ELBO/N {epoch_elbo / N:.4f}")
+ 
     if verbose:
         print(f"NBFA training time: {time.time() - t0:.2f}s")
-
+ 
+    delta_full = torch.cat([torch.zeros(1, D, device=device), delta_free], dim=0)
+    out = dict(L=L, gamma=gamma, log_phi=log_phi, m=m, log_s=log_s, trace=trace, C=C)
     if batch is not None:
-        delta_full = torch.cat([torch.zeros(1, D, device=device), delta_free], dim=0)
-        final = dict(L=L, gamma=gamma, log_phi=log_phi, m=m, log_s=log_s, trace=trace, C=C,
-                delta=delta_full, batch_idx=batch_idx, B=B)
-    else:
-        final = dict(L=L, gamma=gamma, log_phi=log_phi, m=m, log_s=log_s, trace=trace, C=C)
-
-    return final
+        out.update(delta=delta_full, delta_free=delta_free, batch_idx=batch_idx, B=n_batches)
+    return out
 
 
 # ============================================================
@@ -130,7 +161,9 @@ def compute_elbo_scflame(X, L, gamma, log_phi, A, m, log_s, r, nu_k, omega2_k,
     K = len(alpha)
     s = torch.exp(log_s)
     E_log_pi = torch.digamma(alpha) - torch.digamma(alpha.sum())
-
+    if batch_size is None or batch_size >= N:
+        batch_size = N
+ 
     if batch_idx is None or delta_free is None:
         delta_i = torch.zeros(N, D, device=X.device)
         E_log_p_delta = torch.tensor(0.0, device=X.device)
@@ -138,27 +171,33 @@ def compute_elbo_scflame(X, L, gamma, log_phi, A, m, log_s, r, nu_k, omega2_k,
         delta_full = torch.cat([torch.zeros(1, D, device=X.device), delta_free], dim=0)
         delta_i = delta_full[batch_idx]
         E_log_p_delta = -0.5 * torch.sum(delta_free ** 2)
-
-    mc_z = sample_diag_gaussian(m, log_s, mc=mc_samples)
-    Lz = torch.einsum("snq,dq->snd", mc_z, L)
-    log_lik = torch.zeros(mc_samples, N, device=X.device)
-
-    for s_idx in range(mc_samples):
-        logmu = gamma.unsqueeze(0) + Lz[s_idx] + delta_i + torch.log(A).unsqueeze(1)
-        mu = torch.exp(logmu).clamp(min=1e-8)
-        phi = torch.exp(log_phi).unsqueeze(0).clamp(min=0.05, max=100.0)
-        log_lik[s_idx] = log_nb_pmf(X, mu, phi).sum(dim=1)
-
-    E_log_p_y = log_lik.mean(0).sum()
+ 
+    E_log_p_y = 0.0
+    with torch.no_grad():
+        for i in range(0, N, batch_size):
+            idx = slice(i, i + batch_size)
+            X_b, A_b, m_b, ls_b = X[idx], A[idx], m[idx], log_s[idx]
+            delta_b = delta_i[idx]
+ 
+            mc_z = sample_diag_gaussian(m_b, ls_b, mc=mc_samples)
+            Lz = torch.einsum("snq,dq->snd", mc_z, L)
+ 
+            log_lik_b = torch.zeros(mc_samples, X_b.shape[0], device=X.device)
+            for s_idx in range(mc_samples):
+                logmu = gamma.unsqueeze(0) + Lz[s_idx] + delta_b + torch.log(A_b).unsqueeze(1)
+                mu = torch.exp(logmu).clamp(min=1e-8)
+                phi = torch.exp(log_phi).unsqueeze(0).clamp(min=0.1, max=100)
+                log_lik_b[s_idx] = log_nb_pmf(X_b.float(), mu, phi).sum(dim=1)
+            E_log_p_y += log_lik_b.mean(0).sum().item()
+ 
     E_log_p_z_given_c = torch.tensor(0.0, device=X.device)
-
     for k in range(K):
         diff_sq = (m - nu_k[k].unsqueeze(0)) ** 2
         log_p_z_k = -0.5 * torch.sum(
             torch.log(2 * torch.pi * omega2_k[k]) + (diff_sq + s ** 2) / omega2_k[k], dim=1
         )
         E_log_p_z_given_c += torch.sum(r[:, k] * log_p_z_k)
-
+ 
     E_log_p_c = torch.sum(r * E_log_pi.unsqueeze(0))
     log_B_alpha_0 = torch.lgamma(alpha_0).sum() - torch.lgamma(alpha_0.sum())
     E_log_p_pi = -log_B_alpha_0 + torch.sum((alpha_0 - 1.0) * E_log_pi)
@@ -166,7 +205,7 @@ def compute_elbo_scflame(X, L, gamma, log_phi, A, m, log_s, r, nu_k, omega2_k,
     H_q_c = -torch.sum(r * torch.log(r + 1e-10))
     log_B_alpha = torch.lgamma(alpha).sum() - torch.lgamma(alpha.sum())
     neg_H_q_pi = -log_B_alpha + torch.sum((alpha - 1.0) * E_log_pi)
-
+ 
     return E_log_p_y + E_log_p_z_given_c + E_log_p_c + E_log_p_pi + E_log_p_delta + H_q_z + H_q_c - neg_H_q_pi
 
 
@@ -189,48 +228,65 @@ def e_step_responsibilities_scflame(m, s, nu_k, omega2_k, alpha, temperature=1.0
 
 def e_step_latent_scflame(X, L, gamma, log_phi, A, m, log_s, r, nu_k, omega2_k,
                            batch_idx=None, delta_free=None, mc_samples=5, lr=1e-2, steps=10):
-    """E-step:Gradient-based update of latent variational parameters q(z)."""
+    """ E-step: Gradient-based update of latent variational parameters q(z).
+        Each cell's (m, log_s) is optimised independently given the current
+        global parameters]. Chunking over `batch_size` processes cells in blocks. """
     N, D = X.shape
     K = r.shape[1]
-    m_p = m.detach().clone().requires_grad_(True)
-    ls_p = log_s.detach().clone().requires_grad_(True)
-    opt = optim.Adam([m_p, ls_p], lr=lr)
-
+    if batch_size is None or batch_size >= N:
+        batch_size = N
+ 
+    m_out = m.clone()
+    ls_out = log_s.clone()
+ 
     if batch_idx is None or delta_free is None:
         delta_i = torch.zeros(N, D, device=X.device)
     else:
         delta_full = torch.cat([torch.zeros(1, D, device=X.device), delta_free], dim=0)
         delta_i = delta_full[batch_idx]
-
-    for _ in range(steps):
-        opt.zero_grad()
-        s_p = torch.exp(ls_p)
-        mc_z = sample_diag_gaussian(m_p, ls_p, mc=mc_samples)
-        Lz = torch.einsum("snq,dq->snd", mc_z, L)
-        log_lik = torch.zeros(mc_samples, N, device=X.device)
-
-        for s_idx in range(mc_samples):
-            logmu = gamma.unsqueeze(0) + Lz[s_idx] + delta_i + torch.log(A).unsqueeze(1)
-            mu = torch.exp(logmu).clamp(min=1e-8)
-            phi = torch.exp(log_phi).unsqueeze(0).clamp(min=0.1, max=100)
-            log_lik[s_idx] = log_nb_pmf(X, mu, phi).sum(dim=1)
-
-        E_log_p_y = log_lik.mean(0)
-        E_log_p_z = torch.zeros(N, device=X.device)
-
-        for k in range(K):
-            diff_sq = (m_p - nu_k[k].unsqueeze(0)) ** 2
-            log_p_z_k = -0.5 * torch.sum(
-                torch.log(2 * torch.pi * omega2_k[k]) + (diff_sq + s_p ** 2) / omega2_k[k], dim=1
-            )
-            E_log_p_z += r[:, k] * log_p_z_k
-
-        H_q_z = 0.5 * torch.sum(1 + np.log(2 * np.pi) + 2 * ls_p, dim=1)
-        (-torch.sum(E_log_p_y + E_log_p_z + H_q_z)).backward()
-        nn.utils.clip_grad_norm_([m_p, ls_p], max_norm=5.0)
-        opt.step()
-
-    return m_p.detach(), ls_p.detach()
+ 
+    for i in range(0, N, batch_size):
+        idx = slice(i, i + batch_size)
+        B = m[idx].shape[0]
+ 
+        X_b, A_b, r_b = X[idx], A[idx], r[idx]
+        delta_b = delta_i[idx]
+        m_p = m[idx].detach().clone().requires_grad_(True)
+        ls_p = log_s[idx].detach().clone().requires_grad_(True)
+ 
+        opt = optim.Adam([m_p, ls_p], lr=lr)
+ 
+        for _ in range(steps):
+            opt.zero_grad()
+            s_p = torch.exp(ls_p)
+            mc_z = sample_diag_gaussian(m_p, ls_p, mc=mc_samples)
+            Lz = torch.einsum("snq,dq->snd", mc_z, L)
+ 
+            log_lik = torch.zeros(mc_samples, B, device=X.device)
+            for s_idx in range(mc_samples):
+                logmu = gamma.unsqueeze(0) + Lz[s_idx] + delta_b + torch.log(A_b).unsqueeze(1)
+                mu = torch.exp(logmu).clamp(min=1e-8)
+                phi = torch.exp(log_phi).unsqueeze(0).clamp(min=0.1, max=100)
+                log_lik[s_idx] = log_nb_pmf(X_b.float(), mu, phi).sum(dim=1)
+ 
+            E_log_p_y = log_lik.mean(0)
+            E_log_p_z = torch.zeros(B, device=X.device)
+            for k in range(K):
+                diff_sq = (m_p - nu_k[k].unsqueeze(0)) ** 2
+                log_p_z_k = -0.5 * torch.sum(
+                    torch.log(2 * torch.pi * omega2_k[k]) + (diff_sq + s_p ** 2) / omega2_k[k], dim=1
+                )
+                E_log_p_z += r_b[:, k] * log_p_z_k
+ 
+            H_q_z = 0.5 * torch.sum(1 + np.log(2 * np.pi) + 2 * ls_p, dim=1)
+            (-torch.sum(E_log_p_y + E_log_p_z + H_q_z)).backward()
+            nn.utils.clip_grad_norm_([m_p, ls_p], max_norm=5.0)
+            opt.step()
+ 
+        m_out[idx] = m_p.detach()
+        ls_out[idx] = ls_p.detach()
+ 
+    return m_out, ls_out
 
 
 def m_step_cluster_params(m: torch.Tensor, s: torch.Tensor, r: torch.Tensor):
@@ -279,12 +335,19 @@ def train_scflame(X, nbfa_result, gmm_result, K, alpha_prior=0.1,
             which softens early cluster assignments.
         temp_warmup: number of annealing epochs (default: 1/3 of `epochs`).
         max_temp: starting temperature for annealing (default: 2.0).
+        batch_size: cells per SGD mini-batch for the L/phi/delta M-step and
+            the ELBO/E-step-latent chunking. Defaults to None, which trains
+            on the full dataset each epoch (the original full-batch
+            behaviour) -- pass e.g. batch_size=8192 for large datasets.
         verbose: if True, print per-epoch training progress.
 
     Returns a dict with the fitted variational parameters and training trace.
     """
     N, D = X.shape
     device = X.device
+    mini_batching = batch_size is not None and batch_size < N
+    if batch_size is None or batch_size >= N:
+        batch_size = N
 
     L = nn.Parameter(nbfa_result["L"].detach().clone())
     L_init = nbfa_result["L"].detach().clone()
@@ -295,11 +358,9 @@ def train_scflame(X, nbfa_result, gmm_result, K, alpha_prior=0.1,
     m = nbfa_result["m"].detach().clone()
     log_s = nbfa_result["log_s"].detach().clone()
 
-    if "delta" in nbfa_result:
-        delta_full = nbfa_result["delta"].detach().clone()
-        delta_free = nn.Parameter(delta_full[1:].detach().clone())
+    if nbfa_result.get("delta_free") is not None:
+        delta_free = nn.Parameter(nbfa_result["delta_free"].detach().clone())
         batch_idx = nbfa_result["batch_idx"].detach().clone()
-        B = nbfa_result["B"]
     else:
         delta_free = None
         batch_idx = None
@@ -345,7 +406,8 @@ def train_scflame(X, nbfa_result, gmm_result, K, alpha_prior=0.1,
         # E-step: latents, then responsibilities
         m, log_s = e_step_latent_scflame(
             X, L, gamma, log_phi, A, m, log_s, r, nu_k, omega2_k,
-            batch_idx=batch_idx, delta_free=delta_free, mc_samples=mc_samples, lr=lr_latent, steps=latent_steps,
+            batch_idx=batch_idx, delta_free=delta_free, mc_samples=mc_samples,
+            lr=lr_latent, steps=latent_steps, batch_size=batch_size,
         )
         s = torch.exp(log_s)
         r = e_step_responsibilities_scflame(m, s, nu_k, omega2_k, alpha, temperature=temp)
@@ -356,8 +418,7 @@ def train_scflame(X, nbfa_result, gmm_result, K, alpha_prior=0.1,
 
         # M-step: factor loadings and dispersion
         opt_main.zero_grad()
-        mc_z = sample_diag_gaussian(m.detach(), log_s.detach(), mc=mc_samples)
-        Lz = torch.einsum("snq,dq->snd", mc_z, L)
+        permutation = torch.randperm(N)
 
         if delta_free is not None:
             delta_full = torch.cat([torch.zeros(1, D, device=device), delta_free], dim=0)
@@ -365,26 +426,46 @@ def train_scflame(X, nbfa_result, gmm_result, K, alpha_prior=0.1,
         else:
             delta_i = torch.zeros(N, D, device=device)
 
-        total_recon = 0.0
-        for si in range(mc_samples):
-            mu = torch.exp(gamma.unsqueeze(0) + Lz[si] + delta_i + torch.log(A).unsqueeze(1)).clamp(min=1e-8)
-            phi = torch.exp(log_phi).unsqueeze(0).clamp(min=0.05, max=100.0)
-            total_recon += log_nb_pmf(X, mu, phi).sum()
+        for i in range(0, N, batch_size):
+            mb_idx = permutation[i:i + batch_size]  # SGD chunk, unrelated to `batch_idx`
+            n_mb = len(mb_idx)
+ 
+            X_mb, A_mb = X[mb_idx], A[mb_idx]
+            m_mb, log_s_mb = m[mb_idx].detach(), log_s[mb_idx].detach()
+            delta_mb = delta_i[mb_idx]
+ 
+            mc_z = sample_diag_gaussian(m_mb, log_s_mb, mc=mc_samples)
+            Lz = torch.einsum("snq,dq->snd", mc_z, L)
+ 
+            total_recon_mb = 0.0
+            for si in range(mc_samples):
+                mu = torch.exp(gamma.unsqueeze(0) + Lz[si] + delta_mb + torch.log(A_mb).unsqueeze(1)).clamp(min=1e-8)
+                phi = torch.exp(log_phi).unsqueeze(0).clamp(min=0.05, max=100.0)
+                total_recon_mb += log_nb_pmf(X_mb.float(), mu, phi).sum()
 
+            chunk_loss = -(total_recon_mb / mc_samples)
+            if mini_batching:
+                chunk_loss = chunk_loss / N
+            chunk_loss.backward()
+
+
+        L_penalty = L_reg * torch.sum((L - L_init) ** 2)
         if delta_free is not None:
-            delta_penalty = torch.sum(delta_free ** 2) / (2 * 1.0)  # Assuming sigma_delta^2 = 1.0
-        else: 
+            delta_penalty = torch.sum(delta_free ** 2) / (2 * 1.0)  # assuming sigma_delta^2 = 1.0
+        else:
             delta_penalty = 0.0
-
-        loss = -(total_recon / mc_samples) + L_reg * torch.sum((L - L_init) ** 2) + delta_penalty
-        # small ridge penalty keeping L near its NBFA-initialised value
-        
-        loss.backward()
+        (L_penalty + delta_penalty).backward()
+ 
+        clip_params = [L, log_phi] + ([delta_free] if delta_free is not None else [])
+        nn.utils.clip_grad_norm_(clip_params, max_norm=5.0)
         opt_main.step()
 
         with torch.no_grad():
-            cur_elbo = compute_elbo_scflame(X, L, gamma, log_phi, A, m, log_s, r, nu_k, omega2_k, alpha, alpha_0, batch_idx=batch_idx, delta_free=delta_free)
-            trace["elbo"].append(cur_elbo.item())
+            cur_elbo = compute_elbo_scflame(
+                X, L, gamma, log_phi, A, m, log_s, r, nu_k, omega2_k, alpha, alpha_0,
+                batch_idx=batch_idx, delta_free=delta_free, mc_samples=mc_samples, batch_size=batch_size,
+            )
+            trace["elbo"].append(cur_elbo.item() if torch.is_tensor(cur_elbo) else cur_elbo)
             trace["phi_mean"].append(torch.exp(log_phi).mean().item())
 
         if verbose and ep % 20 == 0:
@@ -393,11 +474,16 @@ def train_scflame(X, nbfa_result, gmm_result, K, alpha_prior=0.1,
     if verbose:
         print(f"scFLAME training time: {time.time() - t0:.2f}s")
 
-    return {
+    out = {
         "r": r, "m": m, "log_s": log_s, "nu_k": nu_k, "L": L.detach(),
         "log_phi": log_phi.detach(), "trace": trace, "gamma": gamma, "A": A,
-        "alpha": alpha, "pi_k": pi_k, 'delta': torch.cat([torch.zeros(1, D, device=device), delta_free]) if delta_free is not None else None,
+        "alpha": alpha, "pi_k": pi_k,
     }
+    if delta_free is not None:
+        out["delta"] = torch.cat([torch.zeros(1, D, device=device), delta_free.detach()])
+        out["delta_free"] = delta_free.detach()
+        out["batch_idx"] = batch_idx
+    return out
 
 
 # ============================================================
