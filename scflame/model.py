@@ -51,7 +51,11 @@ def train_nb_fa(X, C=None, batch=None, q=10, mc_samples=5, epochs=300, lr=1e-2,
  
     Returns a dict of fitted parameters used to initialise `train_scflame`.
     """
+    if isinstance(X, np.ndarray):
+        X = torch.from_numpy(X)
+    X = X.to(device).float()
     N, D = X.shape
+    
     mini_batching = batch_size is not None and batch_size < N
     if batch_size is None or batch_size >= N:
         batch_size = N  # single chunk == exact full-batch behaviour
@@ -313,7 +317,7 @@ def train_scflame(X, nbfa_result, gmm_result, K, alpha_prior=0.1,
                    lr_latent=1e-3, latent_steps=3,
                    lr_L=1e-3, L_steps=1, L_reg=0.0,
                    temp_annealing=True, temp_warmup=None,
-                   max_temp=2.0, verbose=False):
+                   max_temp=2.0, verbose=False, device=DEVICE):
     """Fit scFLAME with VI, initialised with NBFA.
 
     Args:
@@ -343,8 +347,11 @@ def train_scflame(X, nbfa_result, gmm_result, K, alpha_prior=0.1,
 
     Returns a dict with the fitted variational parameters and training trace.
     """
+    if isinstance(X, np.ndarray):
+        X = torch.from_numpy(X)
+    X = X.to(device).float()
     N, D = X.shape
-    device = X.device
+    
     mini_batching = batch_size is not None and batch_size < N
     if batch_size is None or batch_size >= N:
         batch_size = N
