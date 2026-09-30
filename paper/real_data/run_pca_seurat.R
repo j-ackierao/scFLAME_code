@@ -178,6 +178,6 @@ for (rep in seq_len(n_reps)) {
 ## SAVE
 ## -----------------------------
 summary_df <- do.call(rbind, results)
-write.csv(summary_df, opt$out_csv, row.names = FALSE)
+write.csv(summary_df, paste0(out_dir, "pca_seurat_summary.csv"), row.names = FALSE)
 
-message("Saved: ", opt$out_csv)
+message("Saved: ", paste0(out_dir, "pca_seurat_summary.csv"))
