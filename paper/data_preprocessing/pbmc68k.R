@@ -32,7 +32,7 @@ annot_path   <- "68k_pbmc_kmeans10_clusters.csv"  # output of 10XGenomics/single
 annot_barcode_col <- "barcode"   # confirm this matches the actual column name in saved CSV
 annot_cluster_col <- "cluster"   # confirm this matches the actual column name in saved CSV
 
-outdir <- "data"               # separate from raw_data_dir - never write filtered output back into the raw input directory
+outdir <- "data/pbmc68k"               # separate from raw_data_dir - never write filtered output back into the raw input directory
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
 
 min_features <- 200
@@ -89,7 +89,7 @@ libsize_factors <- raw_lib_sizes / mean(raw_lib_sizes)
 
 write.csv(
   data.frame(cell_id = colnames(pbmc68), libsize_lib_size = libsize_factors),
-  file.path(outdir, "pbmc68k_libsize_effective_library_sizes.csv"),
+  file.path(outdir, "library_sizes.csv"),
   row.names = FALSE
 )
 
@@ -129,7 +129,7 @@ dge_subset <- estimateDisp(dge_subset)
 
 write.csv(
   data.frame(gene = rownames(raw_counts), dispersion = dge_subset$tagwise.dispersion),
-  file.path(outdir, "pbmc68k_edgeR_tagwise_dispersion.csv"),
+  file.path(outdir, "dispersion.csv"),
   row.names = FALSE
 )
 

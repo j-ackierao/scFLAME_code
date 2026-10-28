@@ -20,7 +20,7 @@ suppressPackageStartupMessages({
   library(edgeR)
 })
 
-outdir <- "data"
+outdir <- "data/segerstolpe"
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
 min_celltype_frac <- 0.025 
 
@@ -80,7 +80,7 @@ sce.seger$CellType <- factor(sce.seger$CellType)
 ## -----------------------------
 seurat.seger <- CreateSeuratObject(counts = counts(sce.seger))
 seurat.seger$celltype <- sce.seger$CellType
-saveRDS(seurat.seger, file.path(outdir, "seger.rds")) # Used in generating simulation data
+saveRDS(seurat.seger, file.path(outdir, "processed.rds")) # Used in generating simulation data
 
 ## -----------------------------
 ## TMM normalization + dispersion
@@ -93,19 +93,19 @@ dge <- estimateDisp(dge)
 ## -----------------------------
 ## Write outputs
 ## -----------------------------
-write.csv(t(counts(sce.seger)), file.path(outdir, "seger_rawcounts.csv"))
+write.csv(t(counts(sce.seger)), file.path(outdir, "counts.csv"))
 
 write.csv(
   data.frame(cell_id = colnames(sce.seger), tmm_lib_size = effective_lib_size),
-  file.path(outdir, "seger_tmm_effective_library_sizes.csv"), row.names = FALSE
+  file.path(outdir, "library_sizes.csv"), row.names = FALSE
 )
 write.csv(
   data.frame(gene = rownames(dge), dispersion = dge$tagwise.dispersion),
-  file.path(outdir, "seger_edgeR_tagwise_dispersion.csv"), row.names = FALSE
+  file.path(outdir, "dispersion.csv"), row.names = FALSE
 )
 write.csv(
   data.frame(cell_id = colnames(sce.seger), celltype = as.integer(as.factor(sce.seger$CellType))),
-  file.path(outdir, "seger_clusters.csv"), row.names = FALSE
+  file.path(outdir, "clusters.csv"), row.names = FALSE
 )
 
 message("Done. ", ncol(sce.seger), " cells x ", nrow(sce.seger), " genes")

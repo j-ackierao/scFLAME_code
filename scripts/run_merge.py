@@ -14,8 +14,7 @@ Expected input files under --data-dir:
     library_sizes.csv    columns "cell_id", "tmm_lib_size" (e.g. TMM size factors) (optional)
 
 Usage:
-    python scripts/run_merge.py --data-dir data/baron --out-dir results/baron \\
-        --k-init 10 15 --k-final 2 --criterion icl
+    python scripts/run_merge.py --data-dir data/baron --out-dir results/baron --k-init 10 15 --k-final 2 --criterion icl
 """
 
 from __future__ import annotations

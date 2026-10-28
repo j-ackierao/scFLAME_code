@@ -249,11 +249,11 @@ if (opt$dropout) {
   metadata(sim_sce)$dropout <- list(
   zinbSim_default = zinb_zeroFraction,
   scaled_simulation = custom_zero_fraction,
-  scaling_factor = 1.5
+  scaling_factor = 1.5,
 
-  message("Dropout comparison:")
-  message("  zinbSim default:   ", round(zinb_zeroFraction, 4))
-  message("  scaled simulation: ", round(custom_zero_fraction, 4))
+  message("Dropout comparison:"),
+  message("  zinbSim default:   ", round(zinb_zeroFraction, 4)),
+  message("  scaled simulation: ", round(custom_zero_fraction, 4)),
 )
 } else {
   custom_zero_fraction <- NA
