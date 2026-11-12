@@ -17,7 +17,7 @@ suppressMessages({
 
 set.seed(42)
 
-outdir <- "data"
+outdir <- "data/zeisel"
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
 
 ## -----------------------------
@@ -58,15 +58,15 @@ dge <- estimateDisp(dge)
 ## -----------------------------
 write.csv(
   data.frame(cell_id = colnames(counts_mat), tmm_lib_size = effective_lib_size),
-  file.path(outdir, "zeisel_tmm_effective_library_sizes.csv"), row.names = FALSE
+  file.path(outdir, "library_sizes.csv"), row.names = FALSE
 )
 write.csv(
   data.frame(gene = rownames(dge), dispersion = dge$tagwise.dispersion),
-  file.path(outdir, "zeisel_edgeR_tagwise_dispersion.csv"), row.names = FALSE
+  file.path(outdir, "dispersion.csv"), row.names = FALSE
 )
 write.csv(
   t(as.matrix(counts_mat)),
-  file.path(outdir, "zeisel_rawcounts.csv")
+  file.path(outdir, "counts.csv")
 )
 write.csv(
   data.frame(
@@ -75,8 +75,8 @@ write.csv(
     celltype = seurat_zeisel$celltype,
     celltype_fine = seurat_zeisel$celltype_fine
   ),
-  file.path(outdir, "zeisel_clusters.csv"), row.names = FALSE
+  file.path(outdir, "clusters.csv"), row.names = FALSE
 )
-saveRDS(seurat_zeisel, file.path(outdir, "seurat_zeisel_processed.rds"))
+saveRDS(seurat_zeisel, file.path(outdir, "processed.rds"))
 
 message("Done. ", ncol(seurat_zeisel), " cells x ", nrow(seurat_zeisel), " genes")

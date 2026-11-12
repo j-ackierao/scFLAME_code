@@ -226,6 +226,7 @@ def load_dataset(data_dir: str, n_hvgs: int, sanitize_gene_names: bool = True):
 
     X = torch.tensor(df_hv.values.astype(np.float32), dtype=torch.float32).to(DEVICE)
 
+    
     clusters_df = pd.read_csv(os.path.join(data_dir, "clusters.csv")).set_index("cell_id")
     clusters_df = clusters_df.loc[df_hv.index]
     c_true = clusters_df["celltype"].astype(int).to_numpy()

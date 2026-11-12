@@ -13,7 +13,7 @@ suppressMessages({
 
 set.seed(42)
 
-outdir <- "data"
+outdir <- "data/uterus"
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
 
 min_genes_per_cell <- 250
@@ -86,15 +86,15 @@ dge <- estimateDisp(dge)
 ## -----------------------------
 write.csv(
   data.frame(cell_id = colnames(counts_mat), tmm_lib_size = effective_lib_size),
-  file.path(outdir, "uterus_tmm_effective_library_sizes.csv"), row.names = FALSE
+  file.path(outdir, "library_sizes.csv"), row.names = FALSE
 )
 write.csv(
   data.frame(gene = rownames(dge), dispersion = dge$tagwise.dispersion),
-  file.path(outdir, "uterus_edgeR_tagwise_dispersion.csv"), row.names = FALSE
+  file.path(outdir, "dispersion.csv"), row.names = FALSE
 )
 write.csv(
   t(as.matrix(GetAssayData(seurat.uterus, layer = "counts"))),
-  file.path(outdir, "uterus_rawcounts.csv")
+  file.path(outdir, "counts.csv")
 )
 write.csv(
   data.frame(
@@ -104,9 +104,9 @@ write.csv(
     batch = seurat.uterus$batch,
     batch_metadata = seurat.uterus$batch_metadata
   ),
-  file.path(outdir, "uterus_clusters.csv"), row.names = FALSE
+  file.path(outdir, "clusters.csv"), row.names = FALSE
 )
-saveRDS(seurat.uterus, file.path(outdir, "seurat_uterus_processed.rds"))
+saveRDS(seurat.uterus, file.path(outdir, "processed.rds"))
 
 message("Done. ", ncol(seurat.uterus), " cells x ", nrow(seurat.uterus), " genes across ",
         length(unique(seurat.uterus$batch)), " batches")

@@ -370,11 +370,11 @@ for (s in studies) {
 clusters_all <- do.call(rbind, clusters_list)
 clusters_all$cluster_id[clusters_all$cluster_id == "PP"] <- "Gamma"
 clusters_all$cluster_id[grepl("Mesenchyme|Co-ex|Endo|Epsi|Mast|MHC|Uncl|Not|PSC", clusters_all$cluster_id)] <- "other"
-write.csv(clusters_all, file.path(outdir, "pancreas_all_clusters.csv"), row.names = FALSE)
+write.csv(clusters_all, file.path(outdir, "clusters.csv"), row.names = FALSE)
 
 common_genes <- Reduce(intersect, lapply(raw_list, rownames))
 merged <- do.call(cbind, lapply(raw_list, function(x) x[common_genes, , drop = FALSE]))
-write.csv(t(merged), file.path(outdir, "pancreas_all_4studies_raw_counts.csv"), row.names = TRUE)
+write.csv(t(merged), file.path(outdir, "counts.csv"), row.names = TRUE)
 
 dge_all <- DGEList(counts = merged)
 dge_all <- calcNormFactors(dge_all, method = "TMM")
@@ -382,12 +382,12 @@ dge_all <- estimateDisp(dge_all)
 
 write.csv(
   data.frame(gene = rownames(dge_all), dispersion = dge_all$tagwise.dispersion),
-  file.path(outdir, "pancreas_all_4studies_edgeR_tagwise_dispersion.csv"), row.names = FALSE
+  file.path(outdir, "dispersion.csv"), row.names = FALSE
 )
 write.csv(
   data.frame(cell_id = colnames(merged),
              tmm_lib_size = dge_all$samples$lib.size * dge_all$samples$norm.factors),
-  file.path(outdir, "pancreas_all_4studies_tmm_effective_library_sizes.csv"), row.names = FALSE
+  file.path(outdir, "library_sizes.csv"), row.names = FALSE
 )
 
 message("Done. ", ncol(merged), " cells x ", nrow(merged), " genes across ", length(studies), " studies")

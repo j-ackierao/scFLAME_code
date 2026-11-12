@@ -7,11 +7,13 @@
 
 library(Seurat)
 library(edgeR)
+library(glue)
+library(here)
 
 ## -----------------------------
 ## Configuration
 ## -----------------------------
-counts_path       <- "path/to/counts.rds"   # dgCMatrix, or anything Read10X()/readRDS() returns
+
 metadata_path     <- NULL                   # optional data.frame of per-cell metadata (e.g. cell type), or NULL
 mito_pattern      <- "^MT-"                 # use "^mt-" for mouse
 min_genes_per_cell <- 200                   # nFeature_RNA lower bound
@@ -20,16 +22,18 @@ min_cells_per_gene <- 10                    # gene kept if expressed in >= this 
 min_celltype_frac <- 0.01                   # drop cell types below this fraction of cells (skipped if no label column)
 label_column      <- "celltype"             # column in metadata to use for the above, if present
 n_hvgs            <- 5000
-outdir            <- "data"
-tag               <- "dataset"
+tag               <- "baron"
+outdir            <- glue("data/{tag}")
+counts_path       <- glue("./processed/{tag}/counts.csv")   # dgCMatrix, or anything Read10X()/readRDS() returns
+
 
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
 
 ## -----------------------------
 ## Load counts + build the Seurat object
 ## -----------------------------
-counts_matrix <- readRDS(counts_path)        # swap for Read10X(), read.csv etc. as needed
-meta <- if (!is.null(metadata_path)) readRDS(metadata_path) else NULL
+counts_matrix <- read.csv(counts_path)        # swap for Read10X(), read.csv etc. as needed
+meta <- if (!is.null(metadata_path)) read.csv(metadata_path) else NULL
 
 seurat_obj <- CreateSeuratObject(counts = counts_matrix, meta.data = meta)
 
@@ -80,18 +84,18 @@ dge <- dge[rownames(seurat_obj), ]
 ## -----------------------------
 write.csv(
   t(as.matrix(counts_mat)),
-  file.path(outdir, paste0(tag, "_rawcounts.csv"))
+  file.path(outdir, "counts.csv")
 )
 
 write.csv(
   data.frame(cell_id = colnames(seurat_obj), tmm_lib_size = effective_lib_size),
-  file.path(outdir, paste0(tag, "_tmm_effective_library_sizes.csv")),
+  file.path(outdir, "library_sizes.csv"),
   row.names = FALSE
 )
 
 write.csv(
   data.frame(gene = rownames(dge), dispersion = dge$tagwise.dispersion),
-  file.path(outdir, paste0(tag, "_edgeR_tagwise_dispersion.csv")),
+  file.path(outdir, "dispersion.csv"),
   row.names = FALSE
 )
 
@@ -101,11 +105,13 @@ if (!is.null(label_column) && label_column %in% colnames(seurat_obj@meta.data)) 
       cell_id = colnames(seurat_obj),
       celltype = as.integer(as.factor(seurat_obj@meta.data[[label_column]]))
     ),
-    file.path(outdir, paste0(tag, "_clusters.csv")),
+    file.path(outdir, "clusters.csv"),
     row.names = FALSE
   )
+} else {
+  file.copy(here(paste0("processed/", tag, "/clusters.csv")), here(paste0(outdir, "/clusters.csv")))
 }
 
-saveRDS(seurat_obj, file.path(outdir, paste0(tag, "_processed.rds")))
+saveRDS(seurat_obj, file.path(outdir,"processed.rds"))
 
 message("Done. ", ncol(seurat_obj), " cells x ", nrow(seurat_obj), " genes written to ", outdir)

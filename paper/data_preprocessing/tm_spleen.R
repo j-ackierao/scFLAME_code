@@ -7,11 +7,12 @@ suppressMessages({
   library(TabulaMurisSenisData)
   library(Seurat)
   library(edgeR)
+  library(SingleCellExperiment)
 })
 
 set.seed(42)
 
-outdir <- "data"
+outdir <- "data/spleen"
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
 
 process_spleen <- function(sce, tag, min_genes_per_cell, min_pct_expr = 0.01, n_hvgs = 8000) {
@@ -20,6 +21,7 @@ process_spleen <- function(sce, tag, min_genes_per_cell, min_pct_expr = 0.01, n_
     meta.data = as.data.frame(colData(sce))
   )
 
+  
   seurat_obj[["percent.mt"]] <- PercentageFeatureSet(seurat_obj, pattern = "^mt-")
   seurat_obj <- subset(seurat_obj, subset = nFeature_RNA > min_genes_per_cell & percent.mt < 5)
 
@@ -47,15 +49,15 @@ process_spleen <- function(sce, tag, min_genes_per_cell, min_pct_expr = 0.01, n_
 
   write.csv(
     data.frame(cell_id = colnames(counts_mat), tmm_lib_size = effective_lib_size),
-    file.path(outdir, paste0(tag, "_tmm_effective_library_sizes.csv")), row.names = FALSE
+    file.path(outdir, "library_sizes.csv"), row.names = FALSE
   )
   write.csv(
     data.frame(gene = rownames(dge), dispersion = dge$tagwise.dispersion),
-    file.path(outdir, paste0(tag, "_edgeR_tagwise_dispersion.csv")), row.names = FALSE
+    file.path(outdir, "dispersion.csv"), row.names = FALSE
   )
   write.csv(
     t(as.matrix(GetAssayData(seurat_obj, layer = "counts"))),
-    file.path(outdir, paste0(tag, "_rawcounts.csv"))
+    file.path(outdir, "counts.csv")
   )
   write.csv(
     data.frame(
@@ -63,9 +65,9 @@ process_spleen <- function(sce, tag, min_genes_per_cell, min_pct_expr = 0.01, n_
       cluster_id = as.integer(as.factor(seurat_obj$ground_truth)),
       celltype = seurat_obj$ground_truth
     ),
-    file.path(outdir, paste0(tag, "_clusters.csv")), row.names = FALSE
+    file.path(outdir, "clusters.csv"), row.names = FALSE
   )
-  saveRDS(seurat_obj, file.path(outdir, paste0(tag, "_processed.rds")))
+  saveRDS(seurat_obj, file.path(outdir, "processed.rds"))
 
   message(tag, ": ", ncol(seurat_obj), " cells x ", nrow(seurat_obj), " genes")
   seurat_obj
