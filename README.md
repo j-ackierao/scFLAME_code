@@ -91,6 +91,13 @@ There are two options:
 
    To load the clusters at a chosen K into Scanpy, add `--merge-dir results/sample1_merge --merge-kinit 15 --merge-k 8` to `downstream_scanpy.py`. In R, `plot_merge_tree.R` draws the matching UMAP if you give it a Seurat object.
 
+## Large datasets
+
+For very large datasets (>10k cells) you may run out of memory. Add `--batch-size 8192` (or smaller) 
+to `run_realdata.py` or `run_merge.py` to enable mini-batching. Cells are then processed in chunks, 
+which lowers memory use. Memory use grows with batch size, number of genes and `--mc-samples`, so 
+one can lower this or the number of HVGs.
+
 ## Input files
 
 `--data-dir` must contain these files. Both preprocessing scripts write them for you.

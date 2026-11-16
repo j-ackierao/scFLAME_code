@@ -75,7 +75,7 @@ def run(args: argparse.Namespace) -> None:
     nbfa_result = train_nb_fa(
         X, q=args.latent_dim, C=C, batch=batch_true,
         mc_samples=args.mc_samples, epochs=args.nbfa_epochs,
-        lr=1e-2, disp=dispersions, verbose=args.verbose,
+        lr=1e-2, disp=dispersions, batch_size=args.batch_size, verbose=args.verbose,
     )
     if args.save_checkpoints:
         torch.save(nbfa_result, os.path.join(checkpoint_dir, f"nbfa_result_task_{args.seed}.pt"))
@@ -96,7 +96,7 @@ def run(args: argparse.Namespace) -> None:
             epochs=args.scflame_epochs, mc_samples=args.mc_samples,
             lr_latent=1e-3, latent_steps=3,
             temp_annealing=True, max_temp=1.5,
-            L_steps=3, L_reg=0.01, verbose=args.verbose,
+            L_steps=3, L_reg=0.01, batch_size=args.batch_size, verbose=args.verbose,
         )
         if args.save_checkpoints:
             torch.save(initial_result,
@@ -199,6 +199,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=1, help="Random seed")
     p.add_argument("--save-checkpoints", action="store_true",
                 help="Save the NBFA and initial scFLAME .pt checkpoints under out-dir/checkpoints")
+    p.add_argument("--batch-size", type=int, default=None,
+               help="Process cells in chunks of this size to limit GPU memory on large "
+                    "datasets (default: all cells at once). Try 5000-10000 if you run out of memory")
     p.add_argument("--verbose", action="store_true", help="Print per-epoch training progress")
     return p.parse_args()
 

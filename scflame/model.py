@@ -169,11 +169,8 @@ def compute_elbo_scflame(X, L, gamma, log_phi, A, m, log_s, r, nu_k, omega2_k,
         batch_size = N
  
     if batch_idx is None or delta_free is None:
-        delta_i = torch.zeros(N, D, device=X.device)
         E_log_p_delta = torch.tensor(0.0, device=X.device)
     else:
-        delta_full = torch.cat([torch.zeros(1, D, device=X.device), delta_free], dim=0)
-        delta_i = delta_full[batch_idx]
         E_log_p_delta = -0.5 * torch.sum(delta_free ** 2)
  
     E_log_p_y = 0.0
@@ -181,7 +178,10 @@ def compute_elbo_scflame(X, L, gamma, log_phi, A, m, log_s, r, nu_k, omega2_k,
         for i in range(0, N, batch_size):
             idx = slice(i, i + batch_size)
             X_b, A_b, m_b, ls_b = X[idx], A[idx], m[idx], log_s[idx]
-            delta_b = delta_i[idx]
+            if batch_idx is None or delta_free is None:
+                delta_b = 0.0
+            else:
+                delta_b = torch.cat([torch.zeros(1, D, device=X.device), delta_free], dim=0)[batch_idx[idx]]
  
             mc_z = sample_diag_gaussian(m_b, ls_b, mc=mc_samples)
             Lz = torch.einsum("snq,dq->snd", mc_z, L)
@@ -243,19 +243,17 @@ def e_step_latent_scflame(X, L, gamma, log_phi, A, m, log_s, r, nu_k, omega2_k,
  
     m_out = m.clone()
     ls_out = log_s.clone()
- 
-    if batch_idx is None or delta_free is None:
-        delta_i = torch.zeros(N, D, device=X.device)
-    else:
-        delta_full = torch.cat([torch.zeros(1, D, device=X.device), delta_free], dim=0)
-        delta_i = delta_full[batch_idx]
+
  
     for i in range(0, N, batch_size):
         idx = slice(i, i + batch_size)
         B = m[idx].shape[0]
  
         X_b, A_b, r_b = X[idx], A[idx], r[idx]
-        delta_b = delta_i[idx]
+        if batch_idx is None or delta_free is None:
+            delta_b = 0.0
+        else:
+            delta_b = torch.cat([torch.zeros(1, D, device=X.device), delta_free], dim=0)[batch_idx[idx]]
         m_p = m[idx].detach().clone().requires_grad_(True)
         ls_p = log_s[idx].detach().clone().requires_grad_(True)
  
@@ -428,19 +426,16 @@ def train_scflame(X, nbfa_result, gmm_result, K, alpha_prior=0.1,
         opt_main.zero_grad()
         permutation = torch.randperm(N)
 
-        if delta_free is not None:
-            delta_full = torch.cat([torch.zeros(1, D, device=device), delta_free], dim=0)
-            delta_i = delta_full[batch_idx]
-        else:
-            delta_i = torch.zeros(N, D, device=device)
-
         for i in range(0, N, batch_size):
             mb_idx = permutation[i:i + batch_size]  # SGD chunk, unrelated to `batch_idx`
             n_mb = len(mb_idx)
  
             X_mb, A_mb = X[mb_idx], A[mb_idx]
             m_mb, log_s_mb = m[mb_idx].detach(), log_s[mb_idx].detach()
-            delta_mb = delta_i[mb_idx]
+            if delta_free is None:
+                delta_mb = 0.0
+            else:
+                delta_mb = torch.cat([torch.zeros(1, D, device=device), delta_free], dim=0)[batch_idx[mb_idx]]
  
             mc_z = sample_diag_gaussian(m_mb, log_s_mb, mc=mc_samples)
             Lz = torch.einsum("snq,dq->snd", mc_z, L)

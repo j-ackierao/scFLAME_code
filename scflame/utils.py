@@ -13,6 +13,7 @@ from scipy.optimize import linear_sum_assignment
 from scipy.special import logsumexp
 from sklearn.cluster import KMeans
 from sklearn.metrics import confusion_matrix
+import scipy.io
 import os
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -216,8 +217,12 @@ def print_top_marker_genes(table: pd.DataFrame) -> None:
 def load_dataset(data_dir: str, n_hvgs: int, sanitize_gene_names: bool = True):
     """Load counts + labels, drop rare cell types, subset to top HVGs, and
     optionally load matching dispersions / library sizes. Batch IDs are loaded
-    if provided in the clusters.csv file (column "batch_id")."""
-    df = pd.read_csv(os.path.join(data_dir, "counts.csv"), index_col=0)
+    if provided in the clusters.csv file (column "batch_id"). Either requires
+    a counts.csv file with raw counts (cells x genes) or a 10x-style MTX folder."""
+    if os.path.exists(os.path.join(data_dir, "counts.csv")):
+        df = pd.read_csv(os.path.join(data_dir, "counts.csv"), index_col=0)
+    else:
+        df = read_counts_mtx(data_dir)
 
     log_df = np.log1p(df.values)
     top_idx = np.argsort(log_df.var(axis=0))[-n_hvgs:]
@@ -251,6 +256,32 @@ def load_dataset(data_dir: str, n_hvgs: int, sanitize_gene_names: bool = True):
         C = lib_sizes_csv.loc[df_hv.index]["tmm_lib_size"].values
 
     return X, gene_names, c_true, dispersions, C, batch_true
+
+def read_counts_mtx(data_dir, var_names="gene_symbols"):
+    """Read a 10x-style MTX folder (matrix.mtx, barcodes.tsv, features.tsv or genes.tsv,
+    gzipped or not) into a cells x genes DataFrame, like reading counts.csv with index_col=0.
+    var_names: "gene_symbols" (second column of features.tsv) or "gene_ids" (first column)."""
+    def path(names):
+        for name in names:
+            for ext in (".gz", ""):
+                p = os.path.join(data_dir, name + ext)
+                if os.path.exists(p):
+                    return p
+        raise FileNotFoundError(f"None of {names} found in {data_dir}")
+
+    X = scipy.io.mmread(path(["matrix.mtx"])).tocsr()
+    cells = pd.read_csv(path(["barcodes.tsv"]), sep="\t", header=None)[0].astype(str)
+    features = pd.read_csv(path(["features.tsv", "genes.tsv"]), sep="\t", header=None)
+    col = 1 if var_names == "gene_symbols" and features.shape[1] > 1 else 0
+    genes = features[col].astype(str)
+
+    # Make repeated gene names unique (X, X-1, X-2, ...), as scanpy does
+    dup = genes.groupby(genes).cumcount()
+    genes = genes.where(dup == 0, genes + "-" + dup.astype(str))
+
+    if X.shape == (len(genes), len(cells)):   # 10x convention is genes x cells
+        X = X.T
+    return pd.DataFrame(X.toarray(), index=cells.to_numpy(), columns=genes.to_numpy())
 
 # ============================================================
 # Synthetic data generator (useful for unit tests)
