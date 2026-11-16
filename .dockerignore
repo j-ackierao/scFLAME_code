@@ -1,0 +1,5 @@
+./.venv/
+/data/
+/results/
+/preprocessed/
+**/__pycache__

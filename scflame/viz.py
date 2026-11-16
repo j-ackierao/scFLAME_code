@@ -75,8 +75,8 @@ def plot_tsne_merge_path(m_np, allocations, K_true, K_init,
                  fontsize=12, y=1.01)
 
     # Combine two colormaps for enough distinct colours across K_init clusters
-    cmap20 = plt.cm.get_cmap("tab20", 20)
-    cmap20b = plt.cm.get_cmap("tab20b", 20)
+    cmap20 = plt.get_cmap("tab20", 20)
+    cmap20b = plt.get_cmap("tab20b", 20)
     palette = [cmap20(i) for i in range(20)] + [cmap20b(i) for i in range(20)]
 
     panel_idx = 1

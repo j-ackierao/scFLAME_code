@@ -159,7 +159,7 @@ def m_step_alpha(r: torch.Tensor, alpha_0: torch.Tensor) -> torch.Tensor:
 
 
 def compute_elbo_scflame(X, L, gamma, log_phi, A, m, log_s, r, nu_k, omega2_k,
-                          alpha, alpha_0, batch_idx = None, delta_free = None, mc_samples=5) -> torch.Tensor:
+                          alpha, alpha_0, batch_size=None, batch_idx = None, delta_free = None, mc_samples=5) -> torch.Tensor:
     """ELBO for scFLAME at the current variational parameters."""
     N, D = X.shape
     K = len(alpha)
@@ -231,7 +231,8 @@ def e_step_responsibilities_scflame(m, s, nu_k, omega2_k, alpha, temperature=1.0
 
 
 def e_step_latent_scflame(X, L, gamma, log_phi, A, m, log_s, r, nu_k, omega2_k,
-                           batch_idx=None, delta_free=None, mc_samples=5, lr=1e-2, steps=10):
+                           batch_idx=None, delta_free=None, mc_samples=5, lr=1e-2, steps=10,
+                            batch_size=None):
     """ E-step: Gradient-based update of latent variational parameters q(z).
         Each cell's (m, log_s) is optimised independently given the current
         global parameters]. Chunking over `batch_size` processes cells in blocks. """
@@ -316,8 +317,8 @@ def train_scflame(X, nbfa_result, gmm_result, K, alpha_prior=0.1,
                    epochs=200, mc_samples=5,
                    lr_latent=1e-3, latent_steps=3,
                    lr_L=1e-3, L_steps=1, L_reg=0.0,
-                   temp_annealing=True, temp_warmup=None,
-                   max_temp=2.0, verbose=False, device=DEVICE):
+                   temp_annealing=True, temp_warmup=None, max_temp=2.0,
+                   batch_size = None, verbose=False, device=DEVICE):
     """Fit scFLAME with VI, initialised with NBFA.
 
     Args:

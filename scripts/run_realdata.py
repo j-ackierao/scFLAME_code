@@ -23,7 +23,7 @@ Outputs under --out-dir:
     tsne.png                     t-SNE of the latent factors, repeat 1
 
 Usage:
-    python scripts/run_realdata.py --data-dir data/segerstolpe --out-dir results/segerstolpe --top-n-genes 10 --upregulated-only --print-top-genes
+    python scripts/run_realdata.py --data-dir data/baron --out-dir results/baron --top-n-genes 10 --upregulated-only --print-top-genes
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from scflame import (
     DEVICE, train_nb_fa, train_scflame, make_eii_gmm_init,
     clustering_accuracy, plot_tsne,
+    clustering_accuracy, plot_tsne,
 )
 from scflame.utils import load_dataset, print_top_marker_genes, top_marker_genes_table
 
@@ -56,6 +57,22 @@ def read_cell_ids(data_dir: str, N: int) -> np.ndarray:
 
 def run(args: argparse.Namespace) -> None:
     
+    # def normalise_data_dir(data_dir):
+    #     '''Function to truncate the generated names from the generated data into expected filenames'''
+    #     dirname = os.path.abspath(os.path.dirname(__file__))
+    #     print(dirname)
+    #     for f in data_dir:
+    #         if f.endswith("counts.csv"):
+    #             print(f)
+    #             f.rename(f, os.path.join([data_dir, "counts.csv"]))
+    #         elif f.endswith("dispersion.csv"):
+    #             f.rename(f, os.path.join([data_dir, "dispersion.csv"]))
+    #         elif f.endswith("clusters.csv"):
+    #             f.rename(f, os.path.join([data_dir, "clusters.csv"]))
+    #         elif f.endswith("library_sizes.csv"):
+    #             f.rename(f, os.path.join([data_dir, "library_sizes.csv"]))
+
+    # normalise_data_dir(os.path.abspath(args.data_dir))
     out_dir = args.out_dir
     checkpoint_dir = os.path.join(out_dir, "checkpoints")
     os.makedirs(out_dir, exist_ok=True)

@@ -15,7 +15,7 @@ suppressPackageStartupMessages({
   library(edgeR)
 })
 
-outdir <- "processed"
+outdir <- "data/baron"
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
 min_cells_per_gene <- 10     # genes expressed in fewer than this many cells are excluded
 min_celltype_frac <- 0.02    # cell types below this fraction of all cells are excluded
@@ -54,7 +54,7 @@ sce_filtered$label <- factor(sce_filtered$label)
 ## -----------------------------
 seurat_baron <- CreateSeuratObject(counts = counts(sce_filtered))
 seurat_baron$celltype <- sce_filtered$label
-saveRDS(seurat_baron, file.path(outdir, "seurat_baron_processed.rds"))
+saveRDS(seurat_baron, file.path(outdir, "processed.rds"))
 
 ## -----------------------------
 ## TMM normalization + dispersion
@@ -67,19 +67,19 @@ dge <- estimateDisp(dge)
 ## -----------------------------
 ## Write outputs
 ## -----------------------------
-write.csv(t(counts(sce_filtered)), file.path(outdir, "baron_rawcounts.csv"))
+write.csv(t(counts(sce_filtered)), file.path(outdir, "counts.csv"))
 
 write.csv(
   data.frame(cell_id = colnames(sce_filtered), tmm_lib_size = effective_lib_size),
-  file.path(outdir, "baron_tmm_effective_library_sizes.csv"), row.names = FALSE
+  file.path(outdir, "library_sizes.csv"), row.names = FALSE
 )
 write.csv(
   data.frame(gene = rownames(dge), dispersion = dge$tagwise.dispersion),
-  file.path(outdir, "baron_edgeR_tagwise_dispersion.csv"), row.names = FALSE
+  file.path(outdir, "dispersion.csv"), row.names = FALSE
 )
 write.csv(
   data.frame(cell_id = colnames(sce_filtered), celltype = as.integer(as.factor(sce_filtered$label))),
-  file.path(outdir, "baron_clusters.csv"), row.names = FALSE
+  file.path(outdir, "clusters.csv"), row.names = FALSE
 )
 
 message("Done. ", ncol(sce_filtered), " cells x ", nrow(sce_filtered), " genes")

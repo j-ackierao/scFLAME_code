@@ -14,7 +14,7 @@ suppressPackageStartupMessages({
  
 set.seed(1)
  
-outdir <- "data"
+outdir <- "data/pbmc4k"
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
  
 archive_path   <- "pbmc4k_filtered_gene_bc_matrices.tar.gz"
@@ -62,7 +62,7 @@ pbmc$CellType <- as.factor(pbmc_truelabels$Cluster)
 ## -----------------------------
 ## Save Seurat object
 ## -----------------------------
-saveRDS(pbmc, file.path(outdir, "seurat_pbmc_processed.rds"))
+saveRDS(pbmc, file.path(outdir, "processed.rds"))
  
 ## -----------------------------
 ## TMM normalization + dispersion - computed on the full gene set
@@ -81,19 +81,19 @@ pbmc <- FindVariableFeatures(pbmc, selection.method = "vst", nfeatures = n_hvgs)
 ## -----------------------------
 ## Write outputs
 ## -----------------------------
-write.csv(t(as.matrix(counts_mat)), file.path(outdir, "pbmc_rawcounts.csv"))
+write.csv(t(as.matrix(counts_mat)), file.path(outdir, "counts.csv"))
  
 write.csv(
   data.frame(cell_id = colnames(pbmc), tmm_lib_size = effective_lib_size),
-  file.path(outdir, "pbmc_tmm_effective_library_sizes.csv"), row.names = FALSE
+  file.path(outdir, "library_sizes.csv"), row.names = FALSE
 )
 write.csv(
   data.frame(gene = rownames(dge), dispersion = dge$tagwise.dispersion),
-  file.path(outdir, "pbmc_edgeR_tagwise_dispersion.csv"), row.names = FALSE
+  file.path(outdir, "dispersion.csv"), row.names = FALSE
 )
 write.csv(
   data.frame(cell_id = colnames(pbmc), celltype = as.integer(pbmc$CellType)),
-  file.path(outdir, "pbmc_clusters.csv"), row.names = FALSE
+  file.path(outdir, "clusters.csv"), row.names = FALSE
 )
  
 message("Done. ", ncol(pbmc), " cells x ", nrow(pbmc), " genes")

@@ -21,8 +21,7 @@ Outputs under --out-dir:
     tsne_Kinit{K_init}_{seed}.png
 
 Usage:
-    python scripts/run_merge.py --data-dir data/baron --out-dir results/baron \\
-        --k-init 10 15 --k-final 2 --criterion icl
+    python scripts/run_merge.py --data-dir data/baron --out-dir results/baron --k-init 10 15 --k-final 2 --criterion icl
 """
 
 from __future__ import annotations
