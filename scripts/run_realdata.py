@@ -12,6 +12,16 @@ Expected input files under --data-dir:
     dispersion.csv       columns "gene", "dispersion" (e.g. edgeR estimates) (optional)
     library_sizes.csv    columns "cell_id", "tmm_lib_size" (e.g. TMM size factors) (optional)
 
+Outputs under --out-dir:
+    scflame_summary.csv          one row per repeat: number of clusters, ELBO
+                                 (model fit: higher is better, use it to pick
+                                 a repeat) and ARI/NMI/ACC if labels were given
+    scflame_allocations.csv      cell_id, true label (if given), and per repeat
+                                 the cluster of each cell
+    scflame_latents_rep{n}.csv   cell_id + latent factors for repeat n
+    scflame_top_genes.csv        top marker genes per cluster (--save-top-genes)
+    tsne.png                     t-SNE of the latent factors, repeat 1
+
 Usage:
     python scripts/run_realdata.py --data-dir data/segerstolpe --out-dir results/segerstolpe --top-n-genes 10 --upregulated-only --print-top-genes
 """
@@ -30,12 +40,22 @@ from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from scflame import (
     DEVICE, train_nb_fa, train_scflame, make_eii_gmm_init,
-    clustering_accuracy, get_top_genes_per_cluster, plot_tsne,
+    clustering_accuracy, plot_tsne,
 )
 from scflame.utils import load_dataset, print_top_marker_genes, top_marker_genes_table
 
 
+def read_cell_ids(data_dir: str, N: int) -> np.ndarray:
+    """Cell IDs from the first column of counts.csv, so outputs can be matched back to Seurat/Scanpy."""
+    ids = pd.read_csv(os.path.join(data_dir, "counts.csv"), usecols=[0]).iloc[:, 0].astype(str).to_numpy()
+    if len(ids) != N:
+        print(f"WARNING: counts.csv has {len(ids)} cells but {N} were fitted; using row numbers as cell IDs.")
+        return np.array([f"cell_{i}" for i in range(N)])
+    return ids
+
+
 def run(args: argparse.Namespace) -> None:
+    
     out_dir = args.out_dir
     checkpoint_dir = os.path.join(out_dir, "checkpoints")
     os.makedirs(out_dir, exist_ok=True)
@@ -45,13 +65,22 @@ def run(args: argparse.Namespace) -> None:
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    X, gene_names, c_true_np, dispersions, C, batch_true = load_dataset(args.data_dir, args.n_hvgs)
+    X, gene_names, c_true_np, dispersions, C, batch_true = load_dataset(
+        args.data_dir, args.n_hvgs, sanitize_gene_names=args.sanitize_gene_names,
+    )
     N, D = X.shape
-    K_true = len(np.unique(c_true_np))
-    print(f"N={N}, D={D}, true clusters={K_true}")
+    cell_ids = read_cell_ids(args.data_dir, N)
+    has_labels = c_true_np is not None
+    K_true = len(np.unique(c_true_np)) if has_labels else None
+    K = args.n_clusters if args.n_clusters is not None else K_true
+    if K is None:
+        raise SystemExit("No ground-truth labels found: please choose the number of clusters with --n-clusters.")
+    print(f"N={N}, D={D}, fitting K={K} clusters" + (f" (true clusters={K_true})" if has_labels else ""))
 
     summary_rows = []
-    alloc_cols = {"true_labels": c_true_np}
+    alloc_cols = {"cell_id": cell_ids}
+    if has_labels:
+        alloc_cols["true_labels"] = c_true_np
     gene_table_rows = []
     tsne_data = None
 
@@ -69,10 +98,10 @@ def run(args: argparse.Namespace) -> None:
         if args.save_checkpoints:
             torch.save(nbfa_result, os.path.join(checkpoint_dir, f"nbfa_result_rep{repeat + 1}.pt"))
 
-        gmm_init = make_eii_gmm_init(nbfa_result, K_true, DEVICE, seed=repeat_seed + 500)
+        gmm_init = make_eii_gmm_init(nbfa_result, K, DEVICE, seed=repeat_seed + 500)
 
         final_result = train_scflame(
-            X, nbfa_result, gmm_init, K_true,
+            X, nbfa_result, gmm_init, K,
             epochs=args.scflame_epochs, mc_samples=args.mc_samples,
             lr_latent=1e-3, latent_steps=3,
             temp_annealing=True, max_temp=1.5,
@@ -81,16 +110,23 @@ def run(args: argparse.Namespace) -> None:
         if args.save_checkpoints:
             torch.save(final_result, os.path.join(checkpoint_dir, f"scflame_result_rep{repeat + 1}.pt"))
 
-        c_pred = final_result["r"].argmax(dim=1).cpu().numpy()
+        r = final_result["r"].detach()
+        c_pred = r.argmax(dim=1).cpu().numpy()
         alloc_cols[f"rep{repeat + 1}_pred"] = c_pred
+
+        latents = final_result["m"].detach().cpu().numpy()
+        latent_df = pd.DataFrame(latents, columns=[f"latent_{j + 1}" for j in range(latents.shape[1])])
+        latent_df.insert(0, "cell_id", cell_ids)
+        latent_df.to_csv(os.path.join(out_dir, f"scflame_latents_rep{repeat + 1}.csv"), index=False)
 
         summary_rows.append({
             "repeat": repeat,
             "K_true": K_true,
-            "K_final": len(np.unique(c_pred)),
-            "ari_final": adjusted_rand_score(c_true_np, c_pred),
-            "nmi_final": normalized_mutual_info_score(c_true_np, c_pred),
-            "acc_final": clustering_accuracy(c_true_np, c_pred),
+            "K_fitted": K,
+            "K_final": len(np.unique(c_pred)),  # can be < K_fitted if a cluster empties
+            "ari_final": adjusted_rand_score(c_true_np, c_pred) if has_labels else np.nan,
+            "nmi_final": normalized_mutual_info_score(c_true_np, c_pred) if has_labels else np.nan,
+            "acc_final": clustering_accuracy(c_true_np, c_pred) if has_labels else np.nan,
             "elbo_final": final_result["trace"]["elbo"][-1],
         })
 
@@ -108,8 +144,9 @@ def run(args: argparse.Namespace) -> None:
 
         if repeat == 0:
             tsne_data = dict(
-                latents=final_result["m"].detach().cpu().numpy(),
-                true_labels=c_true_np, pred_labels=c_pred, K_true=K_true,
+                latents=latents,
+                # without labels, both panels show the scFLAME clusters
+                true_labels=c_true_np if has_labels else c_pred, pred_labels=c_pred, K_true=K,
             )
 
     summary_path = os.path.join(args.out_dir, "scflame_summary.csv")
@@ -138,6 +175,8 @@ def parse_args() -> argparse.Namespace:
                     help="Directory containing counts.csv, clusters.csv, dispersion.csv, library_sizes.csv")
     p.add_argument("--out-dir", required=True, help="Directory to write results to")
     p.add_argument("--n-hvgs", type=int, default=3000, help="Number of highly variable genes to keep")
+    p.add_argument("--n-clusters", type=int, default=None,
+                    help="Number of clusters K to fit (default: number of distinct labels in clusters.csv)")
     p.add_argument("--latent-dim", type=int, default=10, help="Latent factor dimensionality q")
     p.add_argument("--n-repeats", type=int, default=3, help="Number of independent fits")
     p.add_argument("--nbfa-epochs", type=int, default=500, help="Epochs for the NBFA warm-up stage")

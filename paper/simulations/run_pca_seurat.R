@@ -48,6 +48,8 @@ parser$add_argument("--clusters_path", type = "character", required = TRUE,
 parser$add_argument("--out_csv", type = "character", required = TRUE)
 parser$add_argument("--replicate", type = "integer", default = NA,
                      help = "Dataset index (task_id); only used for the top-level seed. Defaults to $SLURM_ARRAY_TASK_ID - 1")
+parser$add_argument("--scenario", type = "character", default = NA,
+                     help = "Optional scenario tag (e.g. Easy/Medium/Hard), added to the output filename and summary")
 opt <- parser$parse_args()
 
 task_id <- if (is.na(opt$replicate)) {
@@ -181,6 +183,7 @@ for (rep in seq_len(n_reps)) {
   results[[length(results) + 1]] <- data.frame(
     rep = rep,
     method = "seurat_tunedK",
+    scenario = opt$scenario,
     resolution = best_res,
     K_true = K_true,
     K_final = length(unique(clusters)),

@@ -13,6 +13,13 @@ Expected input files under --data-dir:
     dispersion.csv       columns "gene", "dispersion" (e.g. edgeR estimates) (optional)
     library_sizes.csv    columns "cell_id", "tmm_lib_size" (e.g. TMM size factors) (optional)
 
+Outputs under --out-dir:
+    merge_history_{seed}.csv            one row per merge step: K, which pair was merged, ELBO, criterion
+    cluster_allocations_{seed}.csv      cell_id, true label (if given), and one column per K along the
+                                        merge path, named Kinit{K_init}_K{K}
+    merge_latents_Kinit{K_init}_{seed}.csv   cell_id + latent factors (for UMAP in Seurat)
+    tsne_Kinit{K_init}_{seed}.png
+
 Usage:
     python scripts/run_merge.py --data-dir data/baron --out-dir results/baron \\
         --k-init 10 15 --k-final 2 --criterion icl
@@ -36,19 +43,30 @@ from scflame.merging import greedy_merge_full, m_step_cluster_params_full
 from scflame.viz import plot_tsne_merge_path
 
 
+def read_cell_ids(data_dir: str, N: int) -> np.ndarray:
+    """Cell IDs from the first column of counts.csv, so outputs can be matched back to Seurat/Scanpy."""
+    ids = pd.read_csv(os.path.join(data_dir, "counts.csv"), usecols=[0]).iloc[:, 0].astype(str).to_numpy()
+    if len(ids) != N:
+        print(f"WARNING: counts.csv has {len(ids)} cells but {N} were fitted; using row numbers as cell IDs.")
+        return np.array([f"cell_{i}" for i in range(N)])
+    return ids
+
+
 def run(args: argparse.Namespace) -> None:
     out_dir = args.out_dir
     checkpoint_dir = os.path.join(out_dir, "checkpoints")
     os.makedirs(out_dir, exist_ok=True)
-    if args.save_checkpoints:
-        os.makedirs(checkpoint_dir, exist_ok=True)
+    # greedy_merge_full is always handed checkpoint_dir, so it has to exist
+    os.makedirs(checkpoint_dir, exist_ok=True)
 
     X, gene_names, c_true_np, dispersions, C, batch_true = load_dataset(
-        args.data_dir, args.n_hvgs, sanitize_gene_names= args.sanitize_gene_names,
+        args.data_dir, args.n_hvgs, sanitize_gene_names=args.sanitize_gene_names,
     )
     N, D = X.shape
-    K_true = len(np.unique(c_true_np))
-    print(f"N={N}, D={D}, true clusters={K_true}")
+    cell_ids = read_cell_ids(args.data_dir, N)
+    has_labels = c_true_np is not None
+    K_true = len(np.unique(c_true_np)) if has_labels else None
+    print(f"N={N}, D={D}" + (f", true clusters={K_true}" if has_labels else ""))
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -58,14 +76,16 @@ def run(args: argparse.Namespace) -> None:
     nbfa_result = train_nb_fa(
         X, q=args.latent_dim, C=C, batch=batch_true,
         mc_samples=args.mc_samples, epochs=args.nbfa_epochs,
-        lr=1e-2, disp=torch.tensor(dispersions, dtype=torch.float32), verbose=args.verbose,
+        lr=1e-2, disp=dispersions, verbose=args.verbose,
     )
     if args.save_checkpoints:
         torch.save(nbfa_result, os.path.join(checkpoint_dir, f"nbfa_result_task_{args.seed}.pt"))
     print("NBFA done.")
 
     history_rows = []
-    alloc_cols = {}
+    alloc_cols = {"cell_id": cell_ids}
+    if has_labels:
+        alloc_cols["true_labels"] = c_true_np
 
     for K_init in args.k_init:
         print(f"\n{'=' * 65}\nK_init={K_init} (K_true={K_true})\n{'=' * 65}")
@@ -85,7 +105,7 @@ def run(args: argparse.Namespace) -> None:
 
         if args.print_top_genes or args.save_top_genes:
             gene_table = top_marker_genes_table(
-                final_result["L"], final_result["nu_k"], final_result["pi_k"],
+                initial_result["L"], initial_result["nu_k"], initial_result["pi_k"],
                 gene_names, top_n=args.top_n_genes, upregulated_only=args.upregulated_only,
             )
             if args.print_top_genes:
@@ -97,7 +117,14 @@ def run(args: argparse.Namespace) -> None:
                 print(f"Saved: {gene_table_path}")
 
         c_pred_init = initial_result["r"].argmax(dim=1).cpu().numpy()
-        print(f"  ARI after scFLAME init: {adjusted_rand_score(c_true_np, c_pred_init):.3f}")
+        ari_init = adjusted_rand_score(c_true_np, c_pred_init) if has_labels else np.nan
+        if has_labels:
+            print(f"  ARI after scFLAME init: {ari_init:.3f}")
+
+        latents = initial_result["m"].detach().cpu().numpy()
+        latent_df = pd.DataFrame(latents, columns=[f"latent_{j + 1}" for j in range(latents.shape[1])])
+        latent_df.insert(0, "cell_id", cell_ids)
+        latent_df.to_csv(os.path.join(out_dir, f"merge_latents_Kinit{K_init}_{args.seed}.csv"), index=False)
 
         # Switch from the shared-diagonal covariance used during fitting to a full covariance per cluster
         m_init, log_s_init, r_init = initial_result["m"], initial_result["log_s"], initial_result["r"]
@@ -124,15 +151,17 @@ def run(args: argparse.Namespace) -> None:
             out_path=os.path.join(out_dir, f"tsne_Kinit{K_init}_{args.seed}.png"),
         )
 
-        m_np = m_init.cpu().numpy()
         for K_step, labels in allocations.items():
             alloc_cols[f"Kinit{K_init}_K{K_step}"] = labels
 
-        ari_final = adjusted_rand_score(c_true_np, final_result["r"].argmax(dim=1).cpu().numpy())
-        print(f"  After merge: ARI={ari_final:.3f} | K={K_reached} (true={K_true})")
+        if has_labels:
+            ari_final = adjusted_rand_score(c_true_np, final_result["r"].argmax(dim=1).cpu().numpy())
+            print(f"  After merge: ARI={ari_final:.3f} | K={K_reached} (true={K_true})")
+        else:
+            print(f"  After merge: K={K_reached}")
 
         for step in history:
-            history_rows.append({"K_init": K_init, "ari_init": adjusted_rand_score(c_true_np, c_pred_init), **step})
+            history_rows.append({"K_init": K_init, "ari_init": ari_init, **step})
 
     history_df = pd.DataFrame(history_rows)
 
@@ -141,9 +170,8 @@ def run(args: argparse.Namespace) -> None:
     print(f"\nSaved: {history_path}")
 
     alloc_df = pd.DataFrame(alloc_cols)
-    alloc_df.index.name = "cell"
     alloc_path = os.path.join(out_dir, f"cluster_allocations_{args.seed}.csv")
-    alloc_df.to_csv(alloc_path)
+    alloc_df.to_csv(alloc_path, index=False)
     print(f"Saved: {alloc_path}")
 
 
@@ -171,7 +199,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--save-top-genes", action="store_true", help="Save top marker genes per cluster to CSV for initial K")
     p.add_argument("--seed", type=int, default=1, help="Random seed")
     p.add_argument("--save-checkpoints", action="store_true",
-                help="Save nbfa_result/scflame_result .pt checkpoints per repeat under out-dir/checkpoints")
+                help="Save the NBFA and initial scFLAME .pt checkpoints under out-dir/checkpoints")
     p.add_argument("--verbose", action="store_true", help="Print per-epoch training progress")
     return p.parse_args()
 
